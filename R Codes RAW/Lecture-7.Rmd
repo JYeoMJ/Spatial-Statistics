@@ -1,0 +1,86 @@
+---
+title: "Geostatistics"
+fontsize: 12pt
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r load_libraries, echo=TRUE, message=FALSE, warning=FALSE}
+library(sp)
+library(gstat)
+library(rgdal)
+library(RColorBrewer)
+library(classInt)
+knitr::opts_knit$set(root.dir = '/Users/jyeo_/Desktop/MSc Statistics Coursework/ST5226 Spatial Statistics/Data')
+```
+
+```{r plot_1, fig.cap="Meuse River Log-Zn"}
+data(meuse)
+coordinates(meuse) <- ~x+y # converts meuse into SpatialPointsDataFrame
+meuse$lzn <- log(meuse$zinc)
+spplot(meuse, "lzn", main="Log-Zinc Measurements", 
+       col.regions = heat.colors(5))
+```
+
+```{r plot_2, warning=FALSE, message=FALSE, fig.height=6, fig.cap="h-scatterplots"}
+hscat(log(zinc) ~ 1, meuse, (0:9)*100)
+```
+
+```{r plot_3, fig.cap="Sample semivariogram for Meuse"}
+vgm_log_zinc <- variogram(log(zinc) ~ 1, meuse)
+plot(vgm_log_zinc)
+```
+
+```{r anisotropy, fig.cap="Investigating Anisotropy"}
+plot(variogram(log(zinc) ~ 1, meuse, alpha=c(0, 45, 90, 135)))
+```
+
+```{r smoky_1, message=FALSE, fig.cap="Smoky Mountain Data"}
+smoky_data <- read.table("/Users/jyeo_/Desktop/MSc Statistics Coursework/ST5226 Spatial Statistics/Data/smoky/smoky.dat", header=TRUE, skip=1)
+coordinates(smoky_data) <- ~easting + northing
+smok <- readOGR("smoky", "smokypoly")
+pal <- brewer.pal(4, "RdYlGn")
+q4 <- classIntervals(smoky_data$ph, n=4, style="fisher")
+spplot(smoky_data, "ph", cuts=q4$brks , col.regions=pal, colorkey=TRUE, 
+       sp.layout=list("sp.polygons", smok), scales=list(draw=TRUE))
+```
+
+```{r plot_4, fig.cap="Smoky Mountain Semivariogram"}
+vgm_ph <- variogram(ph ~ 1, smoky_data, cutoff=120, width=10)
+plot(vgm_ph)
+head(vgm_ph, n=2)
+```
+
+```{r show_vgms, fig.cap="Show Semivariograms"}
+show.vgms(par.strip.text=list(cex=0.6))
+```
+
+```{r list_vgms}
+head(vgm())
+```
+
+```{r sph_1, fig.cap="Show a particular semivariogram"}
+sph1 <- vgm(psill=2, model='Sph', range=10, nugget=1)
+class(sph1)
+sph1
+show.vgms(sill=2, range=10, models='Sph', nugget=1, max=13)
+```
+
+```{r gauss_1}
+gauss1 <- vgm(psill=2, model='Gau', range=10, nugget=1)
+gauss1
+```
+
+```{r gauss_1a, fig.cap="Result of Adding Two Semivariograms"}
+gauss2 <- vgm(psill=2, model='Gau', range=10, nugget=0, add.to=sph1)
+out <- variogramLine(gauss2, maxdist=15)
+plot(out, type='l', main="Sum of Two Variograms")
+```
+
+```{r fit_vgm, fig.cap="Fitting a Spherical Semivariogram"}
+fit_v <- fit.variogram(vgm_log_zinc, vgm(1, "Sph", 800, 1))
+fit_v
+attr(fit_v, "SSErr")
+plot(vgm_log_zinc, model=fit_v)
+```

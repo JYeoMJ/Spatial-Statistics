@@ -1,0 +1,99 @@
+---
+title: 'Lecture 9: Geostatistics with FRK'
+fontsize: 12pt
+output: pdf_document
+---
+```{r include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, message=FALSE, warnings=FALSE)
+rm(list=ls()) # clear global directory
+knitr::opts_knit$set(root.dir = '/Users/jyeo_/Desktop/MSc Statistics Coursework/ST5226 Spatial Statistics/Data')
+```
+
+```{r load_libraries}
+# Parts of this code are taken from:
+# 
+# Zammit-Mangion, A., and Cressie, N. (2021). FRK: An R Package for Spatial 
+# and Spatio-Temporal Prediction with Large Datasets. 
+# Journal of Statistical Software, 98(4), 1--48.
+#
+
+library("sp")
+library("FRK")
+library("gstat")
+library("ggplot2")
+library("gridExtra")
+library("grid")
+#library("INLA")
+```
+
+```{r create_BAUs}
+data(meuse)
+coordinates(meuse) = ~x+y # changes meuse into SpatialPointsDataFrame
+
+# BAUs from hexagonal grid
+HexPols_df <- auto_BAUs(manifold = plane(),
+                        cellsize = 100,
+                        type = "hex",
+                        data = meuse,
+                        nonconvex_hull = FALSE) 
+# BAUs cover the convex hull of observation locations
+plot(HexPols_df)
+```
+
+```{r create_basis}
+# Constructing basis functions
+G <- auto_basis(manifold = plane(),data=meuse, # manifold - nature of spatial domain, plane() or sphere()
+                nres = 2,regular=2,prune=0.1,type = "bisquare") 
+# nres - number of resolutions (in this case, small and large scale, 2 resolutions)
+
+show_basis(G,ggplot()) + geom_point(data=data.frame(meuse),aes(x,y))
+```
+
+
+```{r fit_SRE}
+set.seed(1)
+
+# formula for SRE model (just an intercept here)
+f <- log(zinc) ~ 1
+
+# Call FRK()
+S <- FRK(f = f,                # formula
+         data = list(meuse),   # list of data objects (just meuse in this case)
+         basis=G,
+         BAUs=HexPols_df)          
+
+summary(S)   # Print out a summary of the returned (fitted) SRE model
+```
+
+```{r prediction}
+# Get predictions (for the BAUs by default)
+GridBAUsPred<- predict(S, obs_fs = FALSE)
+
+# Convert the SpatialPolygonsDataFrame "GridBAUs1" to an ordinary data frame
+# For plotting:
+Pred_df <- SpatialPolygonsDataFrame_to_df(sp_polys = GridBAUsPred,vars=c("mu","sd"))
+
+# Set coordinate reference system for predictions
+# 4326 is the EPSG code for WGS84
+
+# Create plot for prediction means, mu
+g1<-ggplot() +
+  geom_polygon(
+    aes(x=x, y=y, fill=mu, group=id), # fill color by mu
+    data = Pred_df)
+
+# Change x and y axis labels
+g1<-g1 + xlab("Easting") + ylab("Northing")
+
+# Plot for standard deviation
+g2<-ggplot() +
+  geom_polygon(
+    aes(x=x, y=y, fill=sd, group=id),
+    data = Pred_df)
+
+g2<-g2 + xlab("Easting") + ylab("Northing")
+
+# Combine the above two plots on one graph
+grid.arrange(g1,g2,nrow=1)
+```
+

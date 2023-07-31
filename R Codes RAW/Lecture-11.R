@@ -1,0 +1,133 @@
+## ----load_libraries, echo=TRUE, message=FALSE, warning=FALSE-------------------------------------
+library(sp)
+library(spdep)
+library(rgdal)
+library(RColorBrewer)
+library(classInt)
+library(gstat)
+library(nlme)       # For Generalised Least Squares Estimation
+library(SpatialEpi) # For Kulldorff scan statistic 
+
+
+NY8 <- readOGR("../../data/NY_data", "NY8_utm18", verbose=FALSE)
+Syracuse <- NY8[NY8$AREANAME == "Syracuse city", ]
+plot(Syracuse, axes=TRUE, main="Syracuse City Census Tracts", 
+     cex.axis=0.8)
+
+
+coords <- coordinates(Syracuse)
+IDs <- row.names(slot(Syracuse, "data"))
+# Consider only the nearest region to be a neighbour
+Sy8_nb <- knn2nb(knearneigh(coords, k=1), row.names = IDs)
+# Consider the 2 nearest regions to be neighbours
+Sy9_nb <- knn2nb(knearneigh(coords, k=2), row.names = IDs)
+Sy8_nb
+
+
+plot(Syracuse, axes=TRUE, cex.axis=0.8)
+plot(Sy8_nb, coords, col='red', add=TRUE)
+plot(Syracuse, axes=TRUE, cex.axis=0.8)
+plot(Sy9_nb, coords, col='red', add=TRUE)
+par(opar)
+
+
+n.comp.nb(Sy8_nb)$nc
+
+
+max_1nn <- max(unlist(nbdists(Sy8_nb, coords)))
+max_1nn
+
+
+# Regions within a distance 0.75*1544 considered neighbours.
+Sy10_nb <- dnearneigh(coords, d1=0, d2=0.75*max_1nn, row.names = IDs)
+# Regions within a distance 1.5*1544 considered neighbours.
+Sy11_nb <- dnearneigh(coords, d1=0, d2=1.5*max_1nn, row.names = IDs)
+summary(Sy10_nb) # Notice that 2 regions have no neighbours.
+# Count the number of neighbour links:
+sapply(list(Sy10_nb, Sy11_nb), function(x) sum(card(x)))
+
+
+# Create rook-style contiguity structure.
+NY_nb <- poly2nb(NY8, queen = FALSE)
+summary(NY_nb)
+n.comp.nb(NY_nb)$nc # Number of disconnected subgraphs
+
+
+Sy9_nb_W <- nb2listw(Sy9_nb)
+Sy9_nb[[1]]
+Sy9_nb_W$weights[[1]]
+
+
+Sy9_nb_B <- nb2listw(Sy9_nb, style="B")
+Sy9_nb_B$weights[[1]]
+Sy9_nb_B$weights[[2]]
+
+
+# Create binary weights matrix
+wts <- nb2listw(NY_nb, style='B')
+# Moran's I test under Normality assumption
+moran.test(NY8$TRACTCAS, wts, randomisation = FALSE)
+
+
+moran.mc(NY8$TRACTCAS, wts, nsim=999)
+
+
+# A function to compute the p-value of Moran's I test statistic under 
+# the constant risk hypothesis.
+moran.pois <- function(y, n_vec, listw, nsim) {
+  Tstat <- rep(0, nsim)
+  # Compute Moran's I from observed data
+  Tstat[1] <- moran(y, listw, length(y), Szero(listw))$I
+  
+  cr <- sum(y)/sum(n_vec) # estimate constant risk
+  pmeans <- cr*n_vec      # expected values for each region
+  for(ii in 2:nsim) {
+    # Generate from expected values (Poisson)
+    tmp <- rpois(rep(1, length(pmeans)), pmeans)
+    # Compute Moran's I for simualted data set 
+    Tstat[ii] <- moran(tmp, listw, length(y), Szero(listw))$I
+  }
+  
+  sum(Tstat[-1] > Tstat[1])/(nsim-1)
+}
+set.seed(111)
+moran.pois(NY8$TRACTCAS, NY8$POP8, wts, 999)
+
+
+cases <- NY8$TRACTCAS          # Observed values
+popn <- NY8$POP8               # population values
+cr <- sum(cases)/sum(popn)     # constant risk
+Ei <- cr * NY8$POP8            # expected values
+Ystd <- (cases - Ei)/sqrt(Ei)  # standardised values
+moran.plot(Ystd, wts)          # create moran plot
+
+
+geary.test(NY8$TRACTCAS, wts, randomisation = FALSE)
+geary.mc(NY8$TRACTCAS, wts, nsim=9999)
+
+
+geary.pois <- function(y, n_vec, listw, nsim) {
+  Tstat <- rep(0, nsim)
+  Tstat[1] <- geary(y, listw, length(y), length(y)-1, Szero(listw))$C
+  
+  cr <- sum(y)/sum(n_vec)
+  pmeans <- cr*n_vec
+  for(ii in 2:nsim) {
+    tmp <- rpois(rep(1, length(pmeans)), pmeans)
+    Tstat[ii] <- geary(tmp, listw, length(y), length(y)-1, Szero(listw))$C
+  }
+  
+  sum(Tstat[-1] < Tstat[1])/(nsim-1)
+}
+set.seed(111)
+geary.pois(NY8$TRACTCAS, NY8$POP8, wts, 999)
+
+
+
+pal <- brewer.pal(5, 'Reds')
+tmp <- localmoran(NY8$TRACTCAS, wts) 
+NY8$lM <- tmp[,4] # Extract standardised version of local I
+q5 <- classIntervals(tmp[,4], n=5, style='fisher')
+q5$brks[6] <- 11.6
+spplot(NY8, 'lM', col.regions=pal, at=q5$brks, main="Local Moran's I")
+

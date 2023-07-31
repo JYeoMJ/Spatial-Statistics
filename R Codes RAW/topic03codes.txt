@@ -1,0 +1,186 @@
+##Example 1
+library(sp)
+data(meuse)
+coordinates(meuse) <- c("x", "y")
+plot(meuse)
+title("points")
+
+##Example 2
+data(meuse.riv)
+meuse.lst <- list(Polygons(
+             list(Polygon(meuse.riv)), 
+             "meuse.riv"))
+meuse.pol <- SpatialPolygons(meuse.lst)
+plot(meuse.pol, col = "grey")
+title("polygons")
+
+##Example 3
+data(meuse.grid)
+coordinates(meuse.grid) <- c("x", "y")
+meuse.grid <- as(meuse.grid, 
+              "SpatialPixels")
+image(meuse.grid, col = "grey")
+title("grid")
+
+##Example 4
+image(meuse.grid, col = "khaki2")
+plot(meuse.pol, 
+     col = "lightsteelblue2", 
+     add = TRUE)
+plot(meuse, add = TRUE,  
+     col = "brown", cex = .5)
+
+##Example 5
+image(meuse.grid, col = "lightgray")
+plot(meuse.pol, add = TRUE)
+plot(meuse, pch = 1, cex = sqrt(meuse$zinc)/20, add = TRUE)
+legVals <- c(100, 200, 500, 1000, 2000)
+legend("left", legend=legVals, pch = 1, pt.cex = sqrt(legVals)/20, 
+  bty = "n",
+  title="measured, ppm", cex=0.8, y.inter=0.9)
+title("measured and interpolated zinc")
+
+##Example 6
+library(RColorBrewer)
+grys <- brewer.pal(7, "Reds")
+cuts=c(0,20,50,200,500,2000)
+print(spplot(meuse, 
+      c("cadmium", "copper", "lead", "zinc"),
+      key.space="right", main = "ppm", 
+      layout=c(4,1),
+      cex = .5, cuts = cuts, col.regions=grys))
+
+meuse$lead.st = as.vector(scale(meuse$lead))
+meuse$zinc.st = as.vector(scale(meuse$zinc))
+meuse$copper.st = as.vector(scale(meuse$copper))
+meuse$cadmium.st = as.vector(scale(meuse$cadmium))
+cuts=c(-1.2,0,1,2,3,5)
+print(spplot(meuse, 
+      c("cadmium.st", "copper.st", "lead.st", "zinc.st"),
+      key.space="right", main = "standardised", 
+      layout=c(4,1),
+      cex = .5, cuts = cuts, col.regions=grys))
+
+##Example 7
+river <- list("sp.polygons", meuse.pol)
+bank <- list("sp.polygons", meuse.grid, col="lightgray", alpha=0.2)
+print(spplot(meuse, 
+      c("cadmium.st", "copper.st", "lead.st", "zinc.st"),
+      key.space="right", main = "standardised", 
+      layout=c(4,1), sp.layout=list(river, bank),
+      cex = .5, cuts = cuts, col.regions=grys))
+
+##Example 7a
+river <- list("sp.polygons", meuse.pol, which=2)
+print(spplot(meuse, 
+      c("cadmium.st", "copper.st", "lead.st", "zinc.st"),
+      key.space="right", main = "standardised", 
+      layout=c(4,1), sp.layout=list(river, bank),
+      cex = .5, cuts = cuts, col.regions=grys))
+
+##Example 8a
+rainbow(n=3)
+col.out <- cm.colors(n=7)
+print(spplot(meuse, "cadmium.st", key.space="right", 
+      main = "standardised", 
+      sp.layout=river, cuts = cuts, 
+      col.regions=col.out))
+
+##Example 8b
+rw.colors <- colorRampPalette(c("red", "blue"))
+print(spplot(meuse, "cadmium.st", key.space="right", 
+      main = "standardised", 
+      sp.layout=river, cuts = cuts, 
+      col.regions=rw.colors(7)))
+
+display.brewer.all()
+
+##Example 9
+library(classInt)
+q5 <- classIntervals(meuse$zinc, n=5, style="quantile")
+q5
+fj5 <- classIntervals(meuse$zinc, n=5, style="fisher")
+fj5
+
+##Example 10
+pal <- brewer.pal(n=5, "Reds")
+spplot(meuse, "zinc", cuts=q5$brks, col.regions=pal, key.space="left",
+       main="Quantiles")
+
+spplot(meuse, "zinc", cuts=fj5$brks, col.regions=pal, key.space="right",
+       main="Fisher")
+
+##Example 11
+library(rgdal)
+#library(spdep)
+#EBest is from the spdep package.
+#I have reproduced the function below as you may face difficulties
+#with the loading of the package.
+
+EBest=function(n,x,family="poisson")
+{
+    if (!is.numeric(x)) 
+        stop(paste(deparse(substitute(x)), "is not a numeric vector"))
+    if (!is.numeric(n)) 
+        stop(paste(deparse(substitute(n)), "is not a numeric vector"))
+    if (any(is.na(x))) 
+        stop("NA in at risk population")
+    if (any(is.na(n))) 
+        stop("NA in cases")
+    if (any(x < .Machine$double.eps)) 
+        stop("non-positive risk population")
+    if (any(n < 0)) 
+        stop("negative number of cases")
+    if (length(x) != length(n)) 
+        stop("vectors of different length")
+    m <- length(n)
+    p <- n/x
+    nsum <- sum(n)
+    xsum <- sum(x)
+    b <- nsum/xsum
+    s2 <- sum(x * (((p - b)^2)/xsum))
+    if (family == "poisson") {
+        a <- s2 - (b/(xsum/m))
+        if (a < 0) 
+            a <- 0
+        est <- b + (a * (p - b))/(a + (b/x))
+        res <- data.frame(raw = p, estmm = est)
+        attr(res, "family") <- family
+        attr(res, "parameters") <- list(a = a, b = b)
+    }
+    else if (family == "binomial") {
+        rho <- (x * s2 - (x/mean(x)) * (b * (1 - b)))/((x - 1) * 
+            s2 + ((mean(x) - x)/mean(x)) * (b * (1 - b)))
+        est <- rho * p + (1 - rho) * b
+        res <- data.frame(raw = p, estmm = est)
+        attr(res, "family") <- family
+        attr(res, "parameters") <- list(a = s2, b = b)
+    }
+    else stop("family unknown")
+    res
+}
+
+NY8 <- readOGR("D:/data/NY_data", "NY8_utm18", verbose=FALSE)
+pal <- brewer.pal(n=5, "Blues")
+NY8$r <- NY8$TRACTCAS / NY8$POP8 /5 * 1e+5
+spplot(NY8, "r", col.regions=pal, main="Unsmoothed Rates",
+       at=classIntervals(NY8$r, n=5, "fisher")$brks)
+
+NY8$eb <- EBest(NY8$TRACTCAS, NY8$POP8)$estmm * 1e+5 / 5
+f5 <- classIntervals(NY8$eb, n=5, "fisher")$brks
+f5[6] <- 25
+f5[1] <- 5
+spplot(NY8, "eb", col.regions=pal, main="Emp. Bayes Smoother",
+       at=f5)
+
+##Example 12
+choy <- choynowski(NY8$TRACTCAS, NY8$POP8)
+id_less <- which(choy$pmap < 0.05 & choy$type == TRUE)
+id_more <- which(choy$pmap < 0.05 & choy$type != TRUE)
+plot(NY8, axes=TRUE)
+plot(NY8[id_less, ], col='blue', border=NA, add=TRUE)
+plot(NY8[id_more, ], col='red', border=NA, add=TRUE)
+legend("topright", fill=c("red", "blue"), 
+       legend=c("Obs. > Exp", "Obs. < Exp"))
+
+

@@ -1,0 +1,80 @@
+##Example 1
+library(rgdal)
+EPSG <- make_EPSG()  # returns a data frame
+EPSG[2,]
+
+##Example 2
+EPSG[3930,]
+sg <- readRDS("D:/data/sg_boundary.rds")
+plot(sg, axes=TRUE)
+grid()
+
+##Example 3
+library(sp)
+sg2 <- spTransform(sg, CRS("+proj=longlat +datum=WGS84"))
+plot(sg2, axes=TRUE)
+
+##Example 4
+Qtown_lat <- dd2dms(1.2937, NS=TRUE)
+Qtown_lon <- dd2dms(103.8125, NS=FALSE)
+Qtown_lat
+as.numeric(Qtown_lon)
+
+##Example 5
+ogrInfo("D:/data/NY_data", "NY8cities")
+cities <- readOGR("D:/data/NY_data", "NY8cities")
+
+##Example 6
+cities
+proj4string(cities)
+
+##Example 7
+den <- readRDS("D:/data/den_clusters_2015_12_15.rds")
+denWGS <- sp::spTransform(den, CRS("+proj=longlat +datum=WGS84"))
+class(denWGS)
+#writeOGR(denWGS, dsn='den.kml', layer='test', driver='KML')
+# Open with Google Earth.
+
+##Example 8
+library(RgoogleMaps)
+clusters <- c(3, 4, 24, 29, 31, 44, 47)
+rochor.clusters <- as(denWGS[clusters, ], "SpatialPolygons")
+bbox(rochor.clusters)
+rochor.map <- GetMap(center=c(lat=1.315, lon=103.853), zoom=15)
+PlotPolysOnStaticMap(rochor.map, rochor.clusters,
+                     add=FALSE)
+
+##Example 9
+library(rgeos)
+subzones <- readRDS("D:/data/sg_subzones.rds")
+sub.area <- gArea(subzones, byid = TRUE)
+tail(sub.area, n=1)
+
+##Example 10
+library(rgeos)
+subzones <- readRDS("D:/data/sg_subzones.rds")
+id <- c(20, 87, 181)
+plot(subzones[id,], axes=TRUE)
+
+##Example 11
+union <- gUnaryUnion(subzones[id,])
+plot(union, axes=TRUE)
+
+##Example 12
+express <- readRDS("D:/data/sg_expressways.rds")
+PIE.index <- express$name == "Pan-Island Expressway"
+PIE.index[41:50]
+PIE <- express[PIE.index,]
+out <- gBuffer(PIE, width=1000)
+plot(sg)
+plot(out, col=grey(0.5, 0.2), border=NA, add=TRUE)
+plot(PIE, col='red', add=TRUE)
+
+##Example 13
+library(sp)
+index <- over(meuse, meuse.grid)
+head(index)
+
+##Example 14
+index.all <- over(meuse, meuse.grid, returnList=TRUE)
+head(index.all)

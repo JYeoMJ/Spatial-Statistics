@@ -1,0 +1,94 @@
+
+library(sp)
+library(spdep)
+library(rgdal)
+library(RColorBrewer)
+library(classInt)
+library(gstat)
+library(nlme)       
+library(SpatialEpi) 
+library(spatialreg)
+
+
+NY8 <- readOGR("../../data/NY_data", "NY8_utm18", verbose=FALSE)
+
+
+opar <- par(mfrow=c(2,2))
+props <- NY8$TRACTCAS/NY8$POP8
+hist(props, main="Raw Proportions")
+qqnorm(props)
+qqline(props)
+hist(NY8$Z, main="Transformed Proportions")
+qqnorm(NY8$Z)
+qqline(NY8$Z)
+par(opar)
+
+
+NY_coords <- as.data.frame(coordinates(NY8))
+names(NY_coords) <- c("x", "y")
+# Create a data frame that includes the x and y coordinates as well.
+NY_data <- cbind(slot(NY8, "data"), NY_coords)
+# OLS analysis of NY data
+NY_ols <- gls(Z ~ PEXPOSURE + PCTOWNHOME + PCTAGE65P, 
+              data=NY_data, method="ML")
+summary(NY_ols)
+
+
+plot(NY_ols)
+
+# WLS analysis of NY data
+NY_wls <- gls(Z ~ PEXPOSURE + PCTOWNHOME + PCTAGE65P, 
+              data=NY_data, method='ML',
+              weights=varFixed(~1/POP8))
+summary(NY_wls)
+
+
+pal1 <- brewer.pal(n=6, 'RdBu')
+NY8$res1 <- residuals(NY_wls, type='pearson')
+q6 <- classIntervals(NY8$res1, 6, style='fisher')
+q6$brks[6] <- 2.1311
+spplot(NY8, 'res1', at=q6$brks, col.regions=pal1, main='Residuals Chloropleth')
+
+
+NY_nb <- poly2nb(NY8, queen = FALSE)
+wts <- nb2listw(NY_nb, style='B')
+moran.plot(as.vector(NY8$res1), wts)
+
+
+opar <- par(mfrow=c(1,2))
+hist(NY8$res1)
+qqnorm(NY8$res1)
+qqline(NY8$res1)
+par(opar)
+
+res_svgm <- variogram(res1 ~ 1, NY8)
+plot(res_svgm)
+
+NY_gls <- gls(Z ~ PEXPOSURE + PCTOWNHOME + PCTAGE65P, data=NY_data,
+              weights=varFixed(~1/POP8), method='ML',
+              corr = corSpher(value=c(15000, 0.8), form=~x+y, nugget=TRUE))
+summary(NY_gls)
+
+
+# Compare the ols, wls and gls models, using hypothesis testing 
+# where possible, and using AIC where models are not nested.
+anova(NY_ols, NY_wls, NY_gls)
+
+
+nysar <- spautolm(Z ~ PEXPOSURE + PCTAGE65P + PCTOWNHOME, 
+                  data=NY8, listw=wts)
+summary(nysar)
+
+
+nysar2 <- spautolm(Z ~ PEXPOSURE + PCTAGE65P + PCTOWNHOME, data=NY8, listw=wts, 
+                   weights=POP8)
+summary(nysar2)
+
+
+nycar <- spautolm(Z ~ PEXPOSURE + PCTAGE65P + PCTOWNHOME, data=NY8, listw=wts, 
+                  family="CAR")
+nycar2 <- spautolm(Z ~ PEXPOSURE + PCTAGE65P + PCTOWNHOME, data=NY8, listw=wts, 
+                  family="CAR", weights=POP8)
+summary(nycar)
+summary(nycar2)
+
