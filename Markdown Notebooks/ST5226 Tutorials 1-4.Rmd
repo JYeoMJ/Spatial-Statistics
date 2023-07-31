@@ -1,0 +1,460 @@
+---
+title: "ST5226 Spatial Statistics: Tutorials 1 - 4"
+output: 
+  html_document:
+    toc: true
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls()) # clear global directory
+knitr::opts_knit$set(root.dir = '/Users/jyeo_/Desktop/MSc Statistics Coursework/ST5226 Spatial Statistics/Data')
+```
+
+## Tutorial 1
+
+### Question 1: Hawker Centres in Singapore (`SpatialPoints`)
+
+```{r}
+# Loading Hawker Centre Data
+hawkers <- readRDS("hawker.rds")
+hw <- hawkers[[1]][-1]; str(hw[[1]])
+
+# Extracting Key Variables of Interest
+
+col_extract <- function(x){
+  ## ----
+  # Input: Takes in one such hawker centre object (list)
+  # Output: Returns a data frame with columns: post_code, street, X, Y
+  ## ----
+  post_code = x$ADDRESSPOSTALCODE
+  street = x$ADDRESSSTREETNAME
+  X_Y = as.numeric(strsplit(x$XY, ",")[[1]])
+  X = X_Y[1]; Y = X_Y[2]
+  
+  result = c(post_code, street, X, Y)
+  return(result)  
+}
+
+# Testing Helper Function
+col_extract(hw[[1]])
+
+# Applying Helper Function on Full Dataset
+hawkers_mat = matrix(unlist(sapply(hw,col_extract)), ncol = 4, byrow = TRUE);
+colnames(hawkers_mat) = c("post_code","street","X","Y")
+
+hawkers_df = data.frame(hawkers_mat)
+hawkers_df$X = as.numeric(hawkers_df$X); hawkers_df$Y = as.numeric(hawkers_df$Y)
+str(hawkers_df)
+```
+
+Next, we plot the hawker centres on the map of Singapore, distinguishing those in the North and South with different colours.
+
+```{r}
+library(sp)
+sg <- readRDS("sg_boundary.rds") # Load SG boundary shape file
+sgCRS = sg@proj4string
+
+# Initialize SpatialPoints object using hawkers_df
+hawkers_sp = SpatialPoints(hawkers_df[,3:4], proj4string = sgCRS)
+
+# Want to classify SpatialPoints based on those in North vs South
+# Note: coordinates(sg) gives us the centroid of the spatial polygon inside sg
+sg_centroid_x = coordinates(sg)[1]; sg_centroid_y = coordinates(sg)[2]
+sp_north = hawkers_sp[hawkers_sp$Y > sg_centroid_y]
+sp_south = hawkers_sp[hawkers_sp$Y <= sg_centroid_y]
+
+# Plot of Hawker Centre Locations in SG
+plot(sg, axes = TRUE)
+plot(sp_north, pch = 20, col = "red", add = TRUE)
+plot(sp_south, pch = 20, col = "blue"  ,add = TRUE)
+title("SG Hawker Centres")
+```
+
+### Question 2: Subzones in Singapore (`SpatialPolygons`)
+
+Note: `subzones_spdf <- SpatialPolygonsDataFrame(subzones_sp,pop_data)` does not work because the row IDs do not match.
+
+`SpatialPolygonsDataFrame` with default ID matching checks the data frame row names against the Polygons ID slots. They must then agree with each other, and be unique (no Polygons objects can share IDs); the data frame rows will be re-ordered if needed to match the Polygons IDs.
+
+```{r, warning = FALSE, message = FALSE }
+rm(list=ls())
+
+# Loading Singapore Sub-Zones
+load("subzones_tutorial_1.rdt")
+str(pop_data)
+
+# ID matching checks data frame ROW NAMES against Polygons ID slots
+# Set row.names for pop_data df first:
+row.names(pop_data) <- pop_data$subzone
+# Initializing SpatialPolygonsDataFrame object
+subzones_spdf <- SpatialPolygonsDataFrame(subzones_sp,pop_data)
+
+# Display Plot of SubZones
+library(RColorBrewer); library(classInt)
+
+# Using Fisher Class Intervals
+q6 <- classIntervals(subzones_spdf$total, n=6, style = "fisher")
+spplot(subzones_spdf, "total", at=q6$brks,
+       colorkey=list(labels=list(at=q6$brks)),
+       col.regions=brewer.pal(6, "Blues"))
+```
+
+### Question 3: Fox Rabies Cases in Germany (`SpatialGridDataFrame`)
+
+```{r}
+rm(list=ls())
+
+# Loading fox rabies case-matrix
+fox_rabies <- readRDS("fox_rabies.rds"); colnames(fox_rabies) <- as.character(c(1:32))
+grid_topo <- GridTopology(c(0,0), c(1,1), c(32,32)) # Initialize grid_topology
+spat_grid <- SpatialGrid(grid_topo)
+
+# Creating SpatialGridDataFrame
+flat = as.vector(t(fox_rabies)) # Note we need to take transpose first, as R will read the matrix column-wise
+sgdf_fox = SpatialGridDataFrame(spat_grid,data.frame(flat))
+
+spplot(sgdf_fox, cuts = 6,
+       col.regions = hcl.colors(12, "YlOrRd", rev = TRUE))
+```
+
+## Tutorial 2
+
+***
+
+### Mapping Smoothed Rates - Theory
+
+
+
+### Question 2
+
+Suppose that we have observed disease counts $Y_1,\dots,Y_N$ in $N$ areas, and we also know that the population in these regions $n_1,\dots,n_N$. 
+
+Let $f$ denote the probability mass function of $Y_i | \xi$, let $l_i$ denote the weighted log-likelihood associated with region $i$:
+
+$$
+l_i(\xi) = \sum^{N}_{j=1} w_{ij}\log f(y_j|\xi)
+$$
+Show that the value of $\xi$ that maximizes the weighted log-likelihood is
+
+$$
+\hat\xi_i = \frac{\sum_{j=1}^{N}w_{ij}Y_j}{\sum_{j=1}^{N}w_{ij}n_j}
+$$
+
+#### Solution:
+
+The probability mass function is
+
+$$
+f(y_j|\xi) = e^{-n_j\xi}\frac{(n_j\xi)^{y_j}}{y_j!}
+$$
+Hence, the log-likelihood is given by
+
+$$
+
+$$
+
+
+
+### Georgia Birth Data
+
+The file `GHCD9.rds` contains a `SpatialPolygonsDataFrame` of 25 contiguous counties in Georgia. The data is from 1999, and contains the following columns:
+
+* **CON:** County Name.
+* **LB:** Number of Live Births of single infants.
+* **LBW:** Number of Low Birth Weight infants. (A subset of above) 
+* **VLBW:** Number of Very Low Birth Weight infants. (A subset of above)
+
+```{r, warning = FALSE, message = FALSE}
+rm(list=ls())
+
+# Loading Geogia SpatialPolygonsDataFrame object
+gc <- readRDS("GHCD9.rds")
+str(gc@data)
+
+# Compute rate of VLBW in each county
+gc$r = gc$VLBW/gc$LB
+
+# Choropleth map plot
+library(RColorBrewer); library(classInt)
+
+con_names = abbreviate(gc$CON)
+# Names against abbreviations (As a reference table)
+county_names = data.frame(matrix(c(as.character(gc$CON),con_names), ncol = 2))
+colnames(county_names) = c("County","Abbrev")
+head(county_names)
+
+# Generating Plot of Raw Rates
+pal <- brewer.pal(n=5, "Oranges")
+spplot(gc, "r", col.regions=pal, main="Unsmoothed Rates",
+       at=classIntervals(gc$r, n=5, "fisher")$brks, # Using Natural Breaks
+       sp.layout=list("sp.text", coordinates(gc), con_names)) # Overlay County names on plot
+```
+
+If we compare the abbreviated names to the original ones, we might conclude that counties Atkinson, Coffee, Wayne and Chatham have the highest rates, while Charlton, Evans and Emanuel have the lowest. However, we also have to 
+inspect their LB values (effectively the $n_i$'s in this question).
+
+If we do so, we can clearly see we are being impacted by the small number problem -- there are regions with very small counts and small population sizes. Moreover the distribution of population sizes is quite skewed. Some smoothing is in order.
+
+```{r}
+slot(gc, "data")[c("Coffee", "Wayne", "Chatham",
+"Charlton", "Emanuel", "Evans", "Atkinson"), # Filter out Counties of interest, compare LB and VLBW counts
+c("CON", "LB", "VLBW")]
+
+# Plotting histogram of No. of Live Births
+hist(gc$LB, breaks=20,col='skyblue')
+```
+
+#### Mapping Smoothed Rates
+
+Implement the locally weighted average given by
+
+$$
+\hat\xi_i = \frac{\sum_{j=1}^{N}w_{ij}Y_j}{\sum_{j=1}^{N}w_{ij}n_j}
+$$
+where
+
+$$
+w_ij = 
+\begin{cases}
+1 \quad \text{if} \quad d_ij \leq D \\
+0 \quad \text{if} \quad d_ij > D
+\end{cases}
+$$
+where $D = 60$ km. 
+
+**Note:** The function `spDists` (in package `sp`) can be used to compute pair-wise distances. For example if `gc` is the R object loaded from `GHCD9.rds`, then `SpDists(coordinates(gc),longlat=TRUE)` gives you the required pairwise distances between centroids of counties.
+
+```{r, warning = FALSE, message = FALSE}
+# Using Method of Locally Weighted Averages
+
+d_ij = spDists(coordinates(gc),longlat = TRUE) # pairwise distance (25 x 25 matrix) in km
+w_ij = 1*(d_ij <= 60) # indicator weights (25 x 25 matrix)
+
+# Note that we should use colSums, instead of rowSums
+# R performs column-wise multiplication in w_ij*Y_j
+Y_j = gc$VLBW; n_j = gc$LB
+xi_hat = colSums(w_ij*Y_j)/colSums(w_ij*n_j); gc$xi_hat = xi_hat
+
+# Generating plot using smoothed rates
+spplot(gc, "r", col.regions=pal, main="Smoothed Rates",
+       at=classIntervals(gc$xi_hat, n=5, "fisher")$brks) # Using Natural Breaks
+```
+
+
+## Tutorial 3
+
+### Question 1: Quadrat Counts and Morisita Index
+
+```{r}
+# Quadrat Count Test (different grid size)
+data(redwood)
+library(spatstat)
+
+quadrat.test(redwood,nx = 2) # p-value = 0.1781 > 0.05 (do not reject Null)
+quadrat.test(redwood,nx = 3) # p-value = 0.007333 < 0.05 (reject)
+
+# Different conclusions for test at alpha = .05
+# Conclusion depends on size of quadrats chosen
+```
+
+```{r}
+# Morisita Index Plot
+miplot(redwood) # For clustered data, index > 1
+
+data(cells); miplot(cells) # Regular point pattern, index < 1
+```
+
+A plot of Mq as a function of quadrat size gives information on whether a process is clustered, and on the sensitivity to the quadrat size. For clustered data, Morisita Index will be greater than 1, and for regular data, it will be less than 1.
+
+### Question 3: Monte Carlo Test for HPP
+
+```{r,}
+data(redwood) # loading redwood data
+
+lambda = 62
+
+Tvec = rep(0,100) # initialize empty vector of length 100
+Tvec[1] = 2 * pi * lambda * sum(nndist(redwood)^2) # compute test statistic from obs data
+set.seed(11)
+
+# Simulate s = 99 datasets under Null
+for (ii in 2:100){
+  pp1 <- rpoispp(lambda) # Generating 62 random uniform points (can use rpoispp or runifpoint)
+  Tvec[ii] = 2 * pi * lambda * sum(nndist(pp1)^2)
+}
+
+# Compute Monte-Carlo p-value
+2* rank(Tvec)[1]/100 # 0.02 < alpha = .05
+# i.e. reject Null
+
+# Histogram of Simulated results and Computed Test Statistic
+hist(Tvec, main = "Skellam Test Statistic for Redwood")
+abline(v=Tvec[1], col = "red")
+```
+
+Comments: The histogram shows that our observed test statistic is way out in the tail ofthe histogram generated under CSR. This signifies that our data do not agree well with the null hypothesis of CSR. The data return a very small p-value. As a reference, consider the japanese pines data, and perform the same test.
+
+
+```{r}
+# Test with Japanese Pines
+Tvec <- rep(0, 100)
+Tvec[1] <- 2 * pi * 65 * sum(nndist(japanesepines)^2)
+set.seed(11)
+for(ii in 2:100) {
+  pp1 <- runifpoint(65)
+  Tvec[ii] <- 2 * pi * 65 * sum(nndist(pp1)^2)
+}
+# p-value:
+hist(Tvec, main="Skellam for Japanese Pines")
+abline(v=Tvec[1], col='red')
+```
+
+
+### Question 4: Maple Tress in Michigan
+
+From the plot alone, we observe that the process does not appear to have constant intensity.
+
+```{r}
+maple <- readRDS("lansing_maple.rds")
+library(spatstat)
+
+## Preliminary Analysis of Point Pattern (EDA)
+
+plot(maple, main ="Maple Trees Michigan")
+
+# Consider G envelope plot at significance level = 4 %
+set.seed(1009)
+g_env <- envelope(maple, Gest, nrank = 2, nsim = 99, verbose = FALSE)
+plot(g_env, obs~r) # G_obs lies above the envelope
+# reject CSR, plot provides an indication of clustering
+
+# F plot leads to the same conclusion
+set.seed(1010)
+f_env <- envelope(maple, Fest, nrank = 2, nsim = 99, verbose = FALSE)
+plot(f_env, obs~r)
+```
+
+Both plots clearly show that the process has points closer together than a CSR process. The G function, which plots the probability that the nearest neighbor distances are less than a specified value, is consistently higher than the envelope generated by CSR.
+
+The F function, which computes the probability that the distance from a randomly sampled point is less than a specified value, is consistently lower than the envelope generated by CSR. In other words, there is more empty space than CSR. The empty space is caused by points clustering together.
+
+*Note:* Inconclusive if clustering is due to non-constant intensity function or interaction between points.
+
+```{r}
+# Consider Quadrat Test (Pearson Chi-Sq Goodness of Fit)
+qm <- quadratcount(maple,nx = 4)
+plot(maple,pch = "+")
+plot(qm, add = TRUE, col = "red")
+
+quadrat.test(maple, nx = 4) # reject H_0 (of CSR)
+```
+
+Quadrat test will reject the null hypothesis of CSR for almost all choices of grids. It is clear we do not have CSR, but exactly how it is being violated is not clear.
+
+
+
+## Tutorial 4
+
+### Graves Data
+
+Research question is whether the spatial pattern of graves with affected teeth is the same as the spatial pattern of graves with unaffected teeth.
+
+```{r}
+load("grave.rdt")
+
+# Nonparametrically estimate intensity function of each of the two grave types
+## Using bw.scott bandwidth for spatial trend analysis (large sigma, greater smoothing)
+
+opar <- par(mfrow=c(1,2))
+plot(density(affected, bw.scott(affected)), main="Affected sites")
+plot(affected, add=TRUE, pch='+')
+plot(density(unaffected, bw.scott(unaffected)), main="Unaffected sites")
+plot(unaffected, add=TRUE, pch='+')
+par(opar)
+
+# High intensity regions for affected sites and unaffected sides do not coincide
+```
+
+The intensity function for the affected sites appears to be bimodal. The intensity function for the unaffected sites appears to have several modes. However, the modes do not appear in the same regions for the two processes. Neither process is suggestive of a HPP. In addition, the range of intensity values is much larger for the unaffected sites.
+
+```{r}
+# Next, to fit an IPP to each process
+## Using trend functions up to order 2 (In this case, we consider constant, linear, quadratic model)
+
+mod_aff_0 <- ppm(affected, ~1); mod_aff_0
+mod_aff_1 <- ppm(affected, ~x+y); mod_aff_1 # Note that Zval shows terms are not significant
+mod_aff_2 <- ppm(affected, ~polynom(x,y,2)); mod_aff_2 # higher order terms not significant
+
+AIC(mod_aff_0)
+AIC(mod_aff_1) # smallest AIC (model with trend order 1 is best fit)
+AIC(mod_aff_2)
+```
+
+```{r}
+# Repeat for Unaffected graves data
+mod_unaff_0 <- ppm(unaffected, ~1); mod_unaff_0
+mod_unaff_1 <- ppm(unaffected, ~x+y); mod_unaff_1
+mod_unaff_2 <- ppm(unaffected, ~polynom(x,y,2)); mod_unaff_2
+
+AIC(mod_unaff_0)
+AIC(mod_unaff_1) 
+AIC(mod_unaff_2) # smallest AIC (model with trend order 2 is best fit)
+```
+
+
+```{r}
+set.seed(11)
+# Quadrat Count Test to assess Goodness of Fit
+## Chi-Sq approximation inaccurate due to small expected cell counts, use Monte Carlo instead
+Q1 <- quadrat.test(mod_aff_1, nx = 3, ny = 4, method = "MonteCarlo")
+plot(affected, main = "affected", pch = "+")
+plot(Q1, add = TRUE, col = "red", textargs=list(cex=0.7, font=2)) # residuals give an idea of the fit
+Q1
+# little evidence against the null, do not reject IPP
+```
+
+```{r}
+Q2 <- quadrat.test(mod_unaff_2, nx = 3, ny = 4, method = "MonteCarlo")
+plot(affected, main = "unaffected", pch = "+")
+plot(Q2, add = TRUE, col = "red", textargs=list(cex=0.7, font=2))
+Q2 # do not reject IPP
+```
+
+```{r}
+# Estimating relative risk
+rr <- relrisk(grave,relative = TRUE, casecontrol = TRUE, case = "affected")
+plot(rr)
+```
+
+The relative risk is not constant over the region. It varies from less than 0.5 to 2.5. In the southwest corner, the odds of being a case are much higher than 1. We could have forseen this earlier, just from inspecting the intensity plots in part (a), because the two surfaces did not appear to have modes in similar regions
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

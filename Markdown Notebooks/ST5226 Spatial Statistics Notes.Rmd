@@ -1,0 +1,459 @@
+---
+title: "ST5226 Spatial Statistics - Part 1"
+output: 
+  html_document:
+    toc: true
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls()) # clear global directory
+knitr::opts_knit$set(root.dir = '/Users/jyeo_/Desktop/MSc Statistics Coursework/ST5226 Spatial Statistics/Data')
+```
+
+## Lecture 1: Classes for Spatial Data in R (8 Aug 2022)
+
+Module Administration: 
+
+* Chan Hock Peng (Weeks 1-6): stachp@nus.edu.sg
+* David Nott (Weeks 7-13): stadj@nus.edu.sg
+
+### Introduction
+
+* Spatial data usually 2D with coordinate values and a system of reference. Need to specify which location on Earth takes the value (0,0).
+* Most frequently used system of reference: WGS84 (has to be specified to avoid problems when merging spatial data)
+
+#### Spatial Autocorrelation
+
+* Spatial data have **spatial autocorrelation** - Variables that are spatially close are likely to be (but not always) more similar. Many interesting questions can be answered by analyzing this autocorrelation.
+  + **The autocorrelation can be due to trends.** E.g. adjacent supermarkets can be more similar because they are accessing a common customer base.
+  + **The autocorrelation can also be due to interactions.** E.g. the supermarkets can be less similar because they compete with each other.
+
+### Preliminaries (Working with R, Data Frames)
+
+#### Data Frames in R (Data Structure)
+
+```{r, collapse = TRUE, eval = FALSE}
+## Example 1 (Cars dataset)
+class(cars); names(cars); head(cars) # Obtains the class, column names, glimpse of dataset
+```
+
+
+```{r, collapse = TRUE, eval = FALSE}
+## Accessing data frame
+cars[c(2,5,6), ]
+
+cars[c(2,5,6), "dist"] # Is equivalent to the following call
+cars$dist[c(2,5,6)] ## Using cars$dist[...]
+```
+
+To obtain summary statistics for the dataset:
+
+```{r}
+summary(cars)
+```
+
+#### Lists in R (Data Structure)
+
+```{r, collapse = TRUE}
+set.seed(23)
+ls1 <- list(A=rnorm(3), B=rnorm(5)); str(ls1) # Generating a list of 2
+```
+
+```{r, eval = FALSE}
+ls1[[2]]; ls1[["B"]]; ls1$B # Accessing list elements (equivalent methods)
+```
+
+#### Saving and Reading Objects 
+
+* One way to save and read objects is by using the `saveRDS` and `readRDS` functions.
+* Advantage of using the RDS method (over save or load) is that the object can be renamed upon reading in.
+* Allows only one R object in the file, but use of lists lets us bypass that restriction.
+
+```{r, eval = FALSE}
+saveRDS(ls1, file="ls1.rds") # Writes the R object ls1 to a file
+ls2 <- readRDS("ls1.rds"); str(ls2) # Accessing the file
+```
+
+#### Hawkers Dataset
+
+Consider the following dataset `hawkers` which is a list with a single object called `SrchResults` (list of 117 objects). 
+
+```{r}
+hawkers <- readRDS("hawker.rds")
+names(hawkers)
+str(hawkers[[1]],max.level=1, list.len = 2) # Consider the box-and-pointer if confused
+
+# Accessing the dataset
+hawkers[[1]][[1]] # List of 1 (contains chr string FeatCount)
+str(hawkers[[1]][[2]], max.level = 1)
+```
+
+We want to extract the street names from the 116 hawker centres into a vector. We will make use of loop functions^1^ to extract these values.
+
+> * `lapply()`: Loop over a list and evaluates a function on each element (returns back a list)
+* `sapply()`: Same as `lapply` but tries to SIMPLIFY the result (in this case, returns a vector)
+
+_^1^ Shortcut to using for and while loops, lets us apply functions over ITERABLE objects_ 
+
+```{r}
+hw <- hawkers[[1]][-1]
+addr <- function(x) {
+  x$ADDRESSSTREETNAME
+}
+
+# Example of applying loop functions over an iterable list to extract desired fields
+street_names <- sapply(hw, addr)
+str(street_names)
+```
+
+#### Applying Summary on an lm object
+
+Here, we fit a linear model using the formula `dist ~ speed` or more generally `y (response) ~ x (predictor)`.
+
+```{r}
+mod1 <- lm(dist~speed, data=cars)
+summary(mod1)
+```
+
+```{r}
+cars$qspeed <- cut(cars$speed, breaks = quantile(cars$speed), include.lowest = TRUE) # cut divides the range of speed into intervals, codes the values in x according to which interval they fall
+
+par(mfrow=c(1,2)) # Set the plotting area into a 1 by 2 array
+plot(dist~speed,data = cars, main="numerical: scatterplot",
+    xlab="dist", ylab="speed")
+boxplot(dist~qspeed,data=cars, main="factor: boxplots",
+   xlab="dist", ylab="qspeed")
+```
+***
+
+### `Spatial` Objects
+
+* Spatial-class: An abstract class from which useful spatial classes are derived
+* CRS-class: Class "CRS" of coordinate reference system arguments 
+
+```{r}
+library(sp)
+getClass("Spatial")
+```
+
+#### Constructing a Spatial Object
+
+An R object of `Spatial` class must contain the following two slots:
+
+* The first slot is called `bbox` and has to be a 2x2 matrix representing a bounding box. For example, \[ bbox = \begin{pmatrix}
+  1 & 2\\ 
+  3 & 4
+\end{pmatrix} \] defines a box with range [1,2] on the x-axis and [3,4] on the y-axis.
+
+* Can think of a bounding box as a rectangle such that all features of the spatial data must lie inside. Note: The column names **must be `c("min", "max")`**.
+
+* The second slot is called `proj4string` and it contains a `CRS` (coordinate reference system) object. This information can be missing.
+
+```{r}
+## Set up the Bounding Box, m and Projection String, crs
+m <- matrix(c(0,0,1,1), ncol=2, dimnames=list(NULL, c("min", "max"))) 
+# recall that matrix entries are filled columnwise!
+crs <- CRS(projargs=as.character(NA)) # stored as a character
+
+S <- Spatial(bbox=m, proj4string=crs); S # Setting up a Spatial object
+str(S)
+```
+
+* `sp` classes are S4 objects, so instead of having elements they have slots and you access them with `@`.
+
+***
+
+### `SpatialPoints`
+
+* `SpatialPoints`: Class for (possibly irregularly-spaced) points
+* Has slot `coords` for an $n \times 2$ matrix - each row contains (x,y)-coords for a single point
+* Structure:
+![](/Users/jyeo_/Desktop/MSc Statistics Coursework/ST5226 Spatial Statistics/Appendix/SpatialPoints.png)
+
+#### CRAN Mirrors Example
+```{r, warning = FALSE}
+CRAN_df <- read.table("CRAN051001a.txt", header=TRUE) # Loading CARN data.frame
+CRAN_mat <- cbind(CRAN_df$long, CRAN_df$lat) # Initializing matrix of longitude and latitude
+row.names(CRAN_mat) <- 1:nrow(CRAN_mat); nrow(CRAN_mat) # nrow() gives no. of points
+llCRS <- CRS("+proj=longlat +ellps=WGS84")
+```
+
+```{r}
+getClass("SpatialPoints")
+```
+
+```{r}
+CRAN_sp <- SpatialPoints(CRAN_mat, proj4string=llCRS) # Initializing SpatialPoints object
+summary(CRAN_sp); str(CRAN_sp)
+```
+
+#### Plot of CRAN mirrors in Brazil
+
+```{r}
+# which() returns the indexes (positions) for which a Boolean vector returns TRUE
+brazil <- which(CRAN_df$loc == "Brazil")
+plot(CRAN_sp[brazil,], axes=TRUE, col='blue',main='CRAN Mirrors in Brazil')
+```
+
+#### `SpatialPointsDataFrame` - Adding Attributes
+
+* `SpatialPointsDataFrame` is a subclass of `SpatialPoints` with two additional arguments: `data` (data frame) and `coords.nrs`.
+* The argument `data` contains non-spatial information, for example the country in which the CRAN mirror site is located.
+* We ignore the `coords.nrs` slot here.
+* The next example shows how you can extend a spatial point object to a data frame.
+
+```{r}
+# When match.ID = TRUE, R checks if rows in spatial point object and data frame 
+## are matched according to their row names
+CRAN_spdf1 <- SpatialPointsDataFrame(CRAN_mat, CRAN_df, proj4string=llCRS, 
+  match.ID=TRUE)
+str(CRAN_spdf1, max.level=2)
+
+# Treats CRAN_spdf like a data frame that merges coordinates with non-spatial information
+Curitiba = CRAN_spdf1[4,]; Curitiba # Note this is still a `SpatialPointsDataFrame` object!
+
+# Accessing the Curitiba Object:
+Curitiba$place # Can either access it like a traditional data frame
+Curitiba@coords # Or you can access its slots
+
+# Extracting a specific column in the data frame (from the `data` slot)
+str(CRAN_spdf1[["loc"]]) # Or equivalently, call `CRAN_spdf1$loc`
+```
+
+***
+
+### `SpatialLines`
+
+* `SpatialLines` is a subclass of `Spatial`
+* In addition to the data attributes `bbox` and `proj4string` from `Spatial` class, contains an additional attribute `lines`, contains information on one or more lines.
+  + At the lowest layer, a `Line` object is an $n \times 2$ coordinate matrix. R connects the first point to the second point, and up to the nth point to create a line.
+  + A `Lines` object is a list of one or more `Line` objects, plus an ID slot. Allows to put multiple lines within a single identification.
+  + e.g. Representing MRT tracks in Singapore using `SpatialLines` object: `lines` slot can be a list with `Lines` objects `East-West`, `North-South`, `Downtown` etc. 
+
+![](/Users/jyeo_/Desktop/MSc Statistics Coursework/ST5226 Spatial Statistics/Appendix/SpatialLines_Inheritance.png)
+  
+```{r}
+# Create the coordinates:
+A_coords <- matrix(c(0,4,2,2), nrow=2, byrow=TRUE)
+B_coords <- matrix(c(3,2,3,0), nrow=2, byrow=TRUE)
+C_coords <- matrix(c(1,0,1,2), nrow=2, byrow=TRUE)
+D_coords <- matrix(c(0,1,2,1), nrow=2, byrow=TRUE)
+
+# Create the Line objects: (Lowest Layer)
+# Line(<n x 2 coord matrix>) -- Every Line is a connection of points in the matrix
+Line_A <- Line(A_coords); Line_B <- Line(B_coords)
+Line_C <- Line(C_coords); Line_D <- Line(D_coords)
+
+# Create the Lines objects: (Think of this as a SET of Line objects -- list of Line's)
+# Lines(<list>,<ID_character string>)
+Lines1 <- Lines(list(Line_A, Line_B), "AB") # Each Lines object has to be represented by an ID!
+Lines2 <- Lines(list(Line_C, Line_D), "CD")
+
+# Create the SpatialLines object
+# SpatialLines(<list>) -> list of Lines objects
+SL <- SpatialLines(list(Lines1, Lines2))
+```
+
+#### Plot of SL
+
+```{r}
+plot(SL, col=c("red", "black"), lwd=3, axes=TRUE) # lwd represents line width
+grid()
+legend("topright", lwd=3, lty=1, col=c("red", "black"), 
+       legend=c("AB", "CD")) # lty,lwd (one of these two must be specified for line drawing)
+```
+
+#### Extend a spatial lines to a data frame
+
+* `SpatialLinesDataFrame` is a subclass of `SpatialLines` with an additional `data` (data frame) attribute.
+* Each row of the data frame contains the attributes of a `Lines` object in your spatial lines data frame.
+* Both `sapply` and `lapply` can be applied to extract common information for each Lines object including its attributes.
+
+```{r}
+df <- data.frame(bumps=c(5.6, 10.2))
+row.names(df) <- c("CD", "AB")
+# Match the ID to the input data frame for the `SpatialLines` object
+SLDF <- SpatialLinesDataFrame(SL, df, match.ID=TRUE)
+
+slot(SLDF, "data") # To access the data slot, either call the slot function
+# Equivalently: use SLDF@data
+```
+
+#### Extracting information using `sapply`
+
+* Suppose `SLjapan` is a `SpatialLines` with 34 `Lines` objects.
+* Each `Lines` object contain one or more `Line` object.
+
+```{r, message = FALSE, warning = FALSE}
+# Initialization of data
+library(maps); library(maptools)
+japan <- map("world", "japan", plot=FALSE)
+p4s <- CRS("+proj=longlat +ellps=WGS84")
+SLjapan <- map2SpatialLines(japan, proj4string=p4s)
+
+# To determine the no. of `Line` objects in each `Lines` object
+# slot(SLjapan, "lines") accesses the `lines` slot (which is a List of 34 objects)
+
+num_obj=function(x){ # For ea. element in this list
+	length(slot(x,"Lines")) # access the `Lines` slot (List of `Line` objects)
+} # Want to know the length of this list!
+
+l_lengths <- sapply(slot(SLjapan, "lines"), num_obj)
+head(l_lengths)
+```
+
+***
+
+### `SpatialPolygons`
+
+* A `Polygon` object is a line with the first and last points identical. The object refers to the region enclosed by this closed line. Ordering matters! (Same set of points connected in different order -> Different Polygon generated)
+* `Polygons` is a list of `Polygon` objects with an `ID`.
+* `SpatialPolygons` is a list of `Polygons`.
+
+#### Structure
+
+* **Slots of `Polygon` object:**
+  + `coords`: A matrix of coordinates. The first and last rows are the same.
+  + `area`: Area of polygon.
+  + `labpt`: Label point (centroid) of polygon.
+  + `hole`: `TRUE` (or 1) if it is a hole and `FALSE` (or 0) if it is not.
+  + `ringDir`: 1 if clockwise and −1 if anticlockwise.
+
+
+```{r}
+getClass("Polygon") # Checking the slots for each object
+```
+
+  
+* **Slots of `Polygons` object:**
+  + `Polygons`: List of `Polygon` objects.
+  + `plotOrder`: Order in which the `Polygon` objects should be plotted. 
+  + `labpt`: Label point of largest `Polygon` object.
+  + `ID`: Identification string.
+  + `area`: Total area of all polygons.
+
+```{r}
+getClass("Polygons") # Contains set of `Polygon` objects under the `Polygons` slot
+```
+
+
+![](/Users/jyeo_/Desktop/MSc Statistics Coursework/ST5226 Spatial Statistics/Appendix/SpatialPolygons_Str.png)
+
+#### Creating `SpatialPolygons`
+
+```{r}
+A_coords <- matrix(c(0,0,0,2,2, # Drawing a square in anti-clockwise direction
+                     2,2,0,0,0), ncol=2, byrow=TRUE) # Note that first point and last point are the SAME!
+
+# Create a Polygon Object -> Set of Polygon objects (in a list) => Polygons (with an associated ID)
+A <- Polygons(list(Polygon(A_coords, hole=FALSE)), "A") 
+
+# Creating Additional Polygons Objects --------------
+B_coords <- matrix(c(1,1,1,3,3,3,
+                     4,2,3,1,1,1), ncol=2, byrow=TRUE)
+B <- Polygons(list(Polygon(B_coords, hole=FALSE)), "B")
+C_coords <- matrix(c(4,3,4,4,5,
+                     4,5,3,4,3), ncol=2, byrow=TRUE)
+C <- Polygons(list(Polygon(C_coords, hole=FALSE)), "C")
+# ---------------------------------------------------
+
+len_3 <- SpatialPolygons(list(A, B, C), 1:3) # 1:3 represents the plotOrder
+```
+
+#### Plot Order for `Polygons` in `SpatialPolygons` object
+
+```{r}
+plot(len_3, axes=TRUE, main="Plot of 3 Polygons objects")
+text(coordinates(len_3)[,1], # Use coordinates() to retrieve spatial coordinates of
+     coordinates(len_3)[,2], c("A", "B", "C"), pos=2) ## Polygons objects
+
+plot(len_3, axes=TRUE, col=c("blue", "red", "green"),main="Plot Order = 1, 2, 3")
+
+len_3_pO <- SpatialPolygons(list(A, B, C), pO=as.integer(c(2,1,3))) # Changing the plot order with pO arg
+plot(len_3_pO, axes=TRUE, col=c("blue", "red", "green"),main="Plot Order = 2, 1, 3")
+```
+
+#### Creating holes
+
+* When computing the area of or plotting a polygon all holes are excluded as they are considered exterior to the polygon.
+* To specify a `Polygon` as a hole, set `hole=TRUE` and/or `ringDir=−1` (i.e. counter-clockwise).
+
+```{r}
+# Initializing Polygon D without holes
+D_coords <- matrix(c(0,0,0,3,3,
+                     3,3,0,0,0), ncol=2, byrow=TRUE)
+D <- Polygon(D_coords, hole=FALSE)
+
+# Initializing Polygon E with hole = TRUE
+E_coords <- matrix(c(1,1,1,2,2,
+                     2,2,1,1,1), ncol=2, byrow=TRUE)
+E <- Polygon(E_coords, hole=TRUE)
+
+DE <- Polygons(list(D,E), "DE")
+DE <- SpatialPolygons(list(DE))
+plot(DE, col='darkorchid4', axes=TRUE)
+```
+
+***
+### `SpatialGrids` Objects
+
+#### Creating a `GridTopology` object
+
+A `GridTopology` object has 3 slots:
+
+* `cellcenter.offset`: Vector coordinates of the center of the cell in the lower left-hand (SW) corner.
+* `cellsize`: Vector with cell size in each dimension
+* `cells.dim`: Vector with number of cells in the x and y directions.
+
+```{r}
+getClass("GridTopology")
+```
+
+```{r}
+# Initialize a 3 x 3 grid of cell-size 1 x 1 beginning from (0,0) - lower left
+g <- GridTopology(c(0,0), c(1,1), c(3,3))
+sg <- SpatialGrid(g); plot(sg, axes=TRUE)
+```
+
+#### Creating a `SpatialGridDataFrame` object
+
+Suppose we want to add an attribute (numbers 1-9) to each cell of sg.
+
+```{r}
+sgd <- SpatialGridDataFrame(sg, data.frame(val=1:9))
+image(sgd,axes=TRUE)
+cc = coordinates(sgd) # Obtain the coordinates
+z = as.character(sgd[["val"]]) # obtain the val attributes from the data slot
+text(cc[,1], cc[,2], z)
+```
+
+#### Grid Indexing
+
+```{r}
+sgd[1,1] # Top-left most cell
+sgd[1:2,2:3] # Cells 2, 3, 5 and 6
+```
+
+### Creating `SpatialPixels`
+
+* Pixel objects focus on cells with attribute information and is more memory efficient for sparse data frames
+
+```{r}
+set.seed(1)
+is.na(sgd$val) <- sample(9, size=3) # selecting 3 values randomly (9,4,7), set values to NA
+sgd$val
+sp1 <- as(sgd, "SpatialPixelsDataFrame") # Coerce sgd as a SpatialPixelsDataFrame object
+coordinates(sp1); sp1$val # Note the removal of 3 cells
+```
+
+***
+
+
+
+
+
+
+
+

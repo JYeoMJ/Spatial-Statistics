@@ -1,0 +1,331 @@
+---
+title: "ST5226 Spatial Statistics - Areal (Regional) Data"
+author: "Yeo Ming Jie, Jonathan (A0164616A)"
+output: 
+  html_document:
+    toc: true
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls()) # clear global directory
+knitr::opts_knit$set(root.dir = '/Users/jyeo_/Desktop/MSc Statistics Coursework/ST5226 Spatial Statistics/Data')
+```
+
+Loading Required Packages:
+
+```{r load_libraries, echo=TRUE, message=FALSE, warning=FALSE}
+library(sp)
+library(spdep)
+library(rgdal)
+library(RColorBrewer)
+library(classInt)
+library(gstat)
+library(nlme)       # For Generalised Least Squares Estimation
+library(SpatialEpi) # For Kulldorff scan statistic 
+```
+
+## Lecture 11: Areal Data
+
+Loading regional data for Leukemia cases in New York States:
+
+```{r plot_Syracuse, warning = FALSE}
+NY8 <- readOGR("NY_data", "NY8_utm18", verbose=FALSE)
+Syracuse <- NY8[NY8$AREANAME == "Syracuse city", ] # SpatialPolygonsDataFrame
+plot(Syracuse, axes=TRUE, main="Syracuse City Census Tracts", 
+     cex.axis=0.8)
+```
+
+### Defining Neighbours using K-Nearest Neighbours
+
+The `knearneigh` function returns a matrix where the $i$th row gives the indices of the $k$-nearest neighbours of region $i$.
+
+```{r neighbours_1}
+coords <- coordinates(Syracuse)
+IDs <- row.names(slot(Syracuse, "data"))
+# Consider only the nearest region to be a neighbour
+Sy8_nb <- knn2nb(knearneigh(coords, k=1), row.names = IDs)
+# Consider the 2 nearest regions to be neighbours
+Sy9_nb <- knn2nb(knearneigh(coords, k=2), row.names = IDs)
+Sy8_nb # knn2nb converts matrix to an `nb` object (list)
+```
+
+Plotting neighbours:
+
+```{r neighbours_2}
+opar <- par(mfrow=c(1,2))
+# 1-Nearest Neighbour Links plotted
+plot(Syracuse, axes=TRUE, cex.axis=0.8)
+plot(Sy8_nb, coords, col='red', add=TRUE) 
+
+# 2-Nearest Neighbour Links plotted
+plot(Syracuse, axes=TRUE, cex.axis=0.8)
+plot(Sy9_nb, coords, col='red', add=TRUE)
+par(opar)
+```
+
+```{r neighbours_3}
+# Identifying number of sub-graphs
+n.comp.nb(Sy8_nb)$nc
+```
+
+### Distance-based Neighborhood Definitions
+
+```{r neighbours_4}
+max_1nn <- max(unlist(nbdists(Sy8_nb, coords)))
+max_1nn # identifying upper bound
+```
+
+```{r neighbours_5}
+# Regions within a distance 0.75*1544 considered neighbours.
+Sy10_nb <- dnearneigh(coords, d1=0, d2=0.75*max_1nn, row.names = IDs)
+# Regions within a distance 1.5*1544 considered neighbours.
+Sy11_nb <- dnearneigh(coords, d1=0, d2=1.5*max_1nn, row.names = IDs)
+summary(Sy10_nb) # Notice that 2 regions have no neighbours.
+```
+```{r}
+# Count the number of neighbour links:
+sapply(list(Sy10_nb, Sy11_nb), function(x) sum(card(x)))
+```
+
+### Adjacency-based neighbourhood definitions
+
+Initialize rook-style neighborhood structure - regions intersect along a line. For queen style, regions intersect at either line or point:
+
+```{r neighbours_6}
+# Create rook-style contiguity structure.
+NY_nb <- poly2nb(NY8, queen = FALSE)
+summary(NY_nb)
+n.comp.nb(NY_nb)$nc # Number of disconnected subgraphs
+```
+
+### Assigning Spatial Weights
+
+Note that there are two types of spatial weights that can be assigned: $W$-style (average) weights and $B$-style (binary) weights.
+
+```{r weights_1}
+Sy9_nb_W <- nb2listw(Sy9_nb)
+Sy9_nb[[1]] # note weights sum to unity
+Sy9_nb_W$weights[[1]]
+```
+
+Binary-style weights:
+
+```{r weights_2}
+Sy9_nb_B <- nb2listw(Sy9_nb, style="B") # Binary-style weights
+Sy9_nb_B$weights[[1]]
+Sy9_nb_B$weights[[2]]
+```
+
+### Measures of Spatial Autocorrelation: Moran's I 
+
+```{r moran_1}
+# Create binary weights matrix
+wts <- nb2listw(NY_nb, style='B')
+# Moran's I test under Normality assumption
+moran.test(NY8$TRACTCAS, wts, randomisation = FALSE)
+```
+
+```{r moran_2}
+moran.mc(NY8$TRACTCAS, wts, nsim=999)
+```
+
+```{r moran_3}
+# A function to compute the p-value of Moran's I test statistic under 
+# the constant risk hypothesis.
+moran.pois <- function(y, n_vec, listw, nsim) {
+  Tstat <- rep(0, nsim)
+  # Compute Moran's I from observed data
+  Tstat[1] <- moran(y, listw, length(y), Szero(listw))$I
+  
+  cr <- sum(y)/sum(n_vec) # estimate constant risk
+  pmeans <- cr*n_vec      # expected values for each region
+  for(ii in 2:nsim) {
+    # Generate from expected values (Poisson)
+    tmp <- rpois(rep(1, length(pmeans)), pmeans)
+    # Compute Moran's I for simualted data set 
+    Tstat[ii] <- moran(tmp, listw, length(y), Szero(listw))$I
+  }
+  
+  sum(Tstat[-1] > Tstat[1])/(nsim-1)
+}
+set.seed(111)
+moran.pois(NY8$TRACTCAS, NY8$POP8, wts, 999)
+```
+
+### Moran Coefficient Plot - Evaluating Spatial Autocorrelation
+
+We first standardize our dataset.
+
+```{r moran_4}
+cases <- NY8$TRACTCAS          # Observed values
+popn <- NY8$POP8               # population values
+cr <- sum(cases)/sum(popn)     # constant risk
+Ei <- cr * NY8$POP8            # expected values
+Ystd <- (cases - Ei)/sqrt(Ei)  # standardised values
+moran.plot(Ystd, wts)          # create moran plot
+```
+
+* The plot indicates that there are several influential points in the cloud.
+* We suspect that, if any, there is only weak spatial autocorrelation.
+* Remember that we have not incorporated spatial covariates yet. When we do so, we would make the Moran coefficient plot with the residuals to assess if there is any residual spatial autocorrelation.
+
+### Geary’s c
+
+```{r geary_1}
+geary.test(NY8$TRACTCAS, wts, randomisation = FALSE)
+geary.mc(NY8$TRACTCAS, wts, nsim=9999)
+```
+
+```{r geary_2}
+geary.pois <- function(y, n_vec, listw, nsim) {
+  Tstat <- rep(0, nsim)
+  Tstat[1] <- geary(y, listw, length(y), length(y)-1, Szero(listw))$C
+  
+  cr <- sum(y)/sum(n_vec)
+  pmeans <- cr*n_vec
+  for(ii in 2:nsim) {
+    tmp <- rpois(rep(1, length(pmeans)), pmeans)
+    Tstat[ii] <- geary(tmp, listw, length(y), length(y)-1, Szero(listw))$C
+  }
+  
+  sum(Tstat[-1] < Tstat[1])/(nsim-1)
+}
+set.seed(111)
+geary.pois(NY8$TRACTCAS, NY8$POP8, wts, 999)
+```
+
+### Local Moran's I (Measure of local spatial association)
+
+```{r local_moran}
+pal <- brewer.pal(5, 'Reds')
+tmp <- localmoran(NY8$TRACTCAS, wts) 
+NY8$lM <- tmp[,4] # Extract standardised version of local I
+q5 <- classIntervals(tmp[,4], n=5, style='fisher')
+q5$brks[6] <- 11.6
+spplot(NY8, 'lM', col.regions=pal, at=q5$brks, main="Local Moran's I")
+```
+
+## Lecture 12: Spatial Regression for Regional Data
+
+```{r load_libraries, echo=TRUE, message=FALSE, warning=FALSE}
+library(sp)
+library(spdep)
+library(rgdal)
+library(RColorBrewer)
+library(classInt)
+library(gstat)
+library(nlme)       
+library(SpatialEpi) 
+library(spatialreg)
+```
+
+
+```{r read_NY8, warning=FALSE}
+NY8 <- readOGR("NY_data", "NY8_utm18", verbose=FALSE)
+```
+
+```{r NY8_plots}
+opar <- par(mfrow=c(2,2))
+props <- NY8$TRACTCAS/NY8$POP8
+hist(props, main="Raw Proportions")
+qqnorm(props)
+qqline(props)
+hist(NY8$Z, main="Transformed Proportions")
+qqnorm(NY8$Z)
+qqline(NY8$Z)
+par(opar)
+```
+
+```{r NY8_OLS}
+NY_coords <- as.data.frame(coordinates(NY8))
+names(NY_coords) <- c("x", "y")
+# Create a data frame that includes the x and y coordinates as well.
+NY_data <- cbind(slot(NY8, "data"), NY_coords)
+# OLS analysis of NY data
+NY_ols <- gls(Z ~ PEXPOSURE + PCTOWNHOME + PCTAGE65P, 
+              data=NY_data, method="ML")
+summary(NY_ols)
+```
+
+```{r plot_NY8_OLS}
+plot(NY_ols)
+```
+
+```{r NY8_wls}
+# WLS analysis of NY data
+NY_wls <- gls(Z ~ PEXPOSURE + PCTOWNHOME + PCTAGE65P, 
+              data=NY_data, method='ML',
+              weights=varFixed(~1/POP8))
+summary(NY_wls)
+```
+
+```{r plot_NY8_wls, warning=FALSE}
+pal1 <- brewer.pal(n=6, 'RdBu')
+NY8$res1 <- residuals(NY_wls, type='pearson')
+q6 <- classIntervals(NY8$res1, 6, style='fisher')
+q6$brks[6] <- 2.1311
+spplot(NY8, 'res1', at=q6$brks, col.regions=pal1, main='Residuals Chloropleth')
+```
+
+```{r moran_plot}
+NY_nb <- poly2nb(NY8, queen = FALSE)
+wts <- nb2listw(NY_nb, style='B')
+moran.plot(as.vector(NY8$res1), wts)
+```
+
+```{r NY8_resplot}
+opar <- par(mfrow=c(1,2))
+hist(NY8$res1)
+qqnorm(NY8$res1)
+qqline(NY8$res1)
+par(opar)
+```
+
+```{r res_svgm}
+res_svgm <- variogram(res1 ~ 1, NY8)
+plot(res_svgm)
+```
+
+```{r NY_gls}
+NY_gls <- gls(Z ~ PEXPOSURE + PCTOWNHOME + PCTAGE65P, data=NY_data,
+              weights=varFixed(~1/POP8), method='ML',
+              corr = corSpher(value=c(15000, 0.8), form=~x+y, nugget=TRUE))
+summary(NY_gls)
+```
+
+```{r NY_anova}
+# Compare the ols, wls and gls models, using hypothesis testing 
+# where possible, and using AIC where models are not nested.
+anova(NY_ols, NY_wls, NY_gls)
+```
+
+```{r NY_sar}
+nysar <- spautolm(Z ~ PEXPOSURE + PCTAGE65P + PCTOWNHOME, 
+                  data=NY8, listw=wts)
+summary(nysar)
+```
+
+```{r NY_sar2}
+nysar2 <- spautolm(Z ~ PEXPOSURE + PCTAGE65P + PCTOWNHOME, data=NY8, listw=wts, 
+                   weights=POP8)
+summary(nysar2)
+```
+
+```{r NY_car}
+nycar <- spautolm(Z ~ PEXPOSURE + PCTAGE65P + PCTOWNHOME, data=NY8, listw=wts, 
+                  family="CAR")
+nycar2 <- spautolm(Z ~ PEXPOSURE + PCTAGE65P + PCTOWNHOME, data=NY8, listw=wts, 
+                  family="CAR", weights=POP8)
+summary(nycar)
+summary(nycar2)
+```
+
+
+
+
+
+
+
+

@@ -1,0 +1,721 @@
+---
+title: "ST5226 Spatial Statistics : Geostatistics and Spatial Predictions"
+author: "Yeo Ming Jie, Jonathan (A0164616A)"
+output: 
+  html_document:
+    toc: true
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls()) # clear global directory
+knitr::opts_knit$set(root.dir = '/Users/jyeo_/Desktop/MSc Statistics Coursework/ST5226 Spatial Statistics/Data')
+```
+
+## Lecture 7: Introduction to Geostatistics
+
+Loading required packages:
+
+```{r, message=FALSE, warning = FALSE}
+library(sp)
+library(gstat)
+library(rgdal)
+library(RColorBrewer)
+library(classInt)
+```
+
+### Meuse Dataset
+
+Recall the Meuse river bank dataset which contained measurements of the metal concentration along the Meuse river in the Netherlands.
+
+```{r Meuse River Log-Zn}
+data(meuse)
+coordinates(meuse) <- ~x+y # converts meuse into SpatialPointsDataFrame
+meuse$lzn <- log(meuse$zinc)
+spplot(meuse, "lzn", main="Log-Zinc Measurements", 
+       col.regions = heat.colors(5))
+```
+
+Observe that the zinc concentrations is larger close to the river bank, clear spatial trend in a given direction - zinc concentrations decreasing as we move in a direction perpendicular to the river bank.
+
+### Exploratory Variogram Analysis
+
+Checking for existence/strength of spatial correlation from scatter plots of pairs $Z(s_i)$ and $Z(s_j)$ grouped according to their separation distances $h = ||s_i-s_j||$, i.e. h-scatter plots. Consider the plots for the following sets of distance bins:
+
+```{r h scatterplot}
+hscat(log(zinc) ~ 1, meuse, (0:9)*100)
+```
+
+Plots indicate the correlation coefficient $r$, observe correlation decays with increasing distance. 
+
+Next, we plot the sample semivariogram estimator for meuse. Observe the following key features, e.g. nugget, sill $\approx 0.6$, Range $\approx 800$.
+
+```{r, Sample Semivariogram Meuse}
+vgm_log_zinc <- variogram(log(zinc) ~ 1, meuse) # Default in the North-South direction
+# ~ 1 defines a single constant predictor, leading to a spatially constant mean coefficient
+plot(vgm_log_zinc)
+```
+
+We can also investigate anisotropy i.e. the covariance function $C(\cdot)$ of the process is a function of both distance and direction, by computing the sample variogram in 4 different directions.
+
+```{r Anisotropy}
+# alpha vector of angles in degrees, clockwise from North
+plot(variogram(log(zinc) ~ 1, meuse, alpha=c(0, 45, 90, 135)))
+```
+
+Observe that the variogram grows slowly in the NE direction, but grows most rapidly in the SE direction.
+
+### Smoky Mountains Dataset (pH measurements)
+
+Next, consider the dataset containing the pH measurements at locations within the Great Smoky Mountains. Observe from the plot that observations with high pH values lay around the boundary of the region.
+
+```{r Smoky Mountains Data, message = F}
+smoky_data <- read.table("/Users/jyeo_/Desktop/MSc Statistics Coursework/ST5226 Spatial Statistics/Data/smoky/smoky.dat", header=TRUE, skip=1)
+coordinates(smoky_data) <- ~easting + northing # initialize Spatial Points Data Frame
+smok <- readOGR("smoky", "smokypoly") # Spatial Polygons
+pal <- brewer.pal(4, "RdYlGn")
+q4 <- classIntervals(smoky_data$ph, n=4, style="fisher")
+spplot(smoky_data, "ph", cuts=q4$brks , col.regions=pal, colorkey=TRUE, 
+       sp.layout=list("sp.polygons", smok), scales=list(draw=TRUE))
+```
+
+Note that the variogram object contains information on the exact values of $h$ used, along with the nuymber of points used to compute the estimate. Plotting the sample variogram estimator, we obtain the following:
+
+```{r Smoky Mountain Semivariogram, collapse = T}
+vgm_ph <- variogram(ph ~ 1, smoky_data, cutoff=120, width=10)
+head(vgm_ph, n=2)
+plot(vgm_ph)
+```
+
+### Available Semivariogram Types
+
+```{r}
+show.vgms(par.strip.text=list(cex=0.6))
+```
+
+In order to get a full list of variogram names used in `gstat`, we can type `vgm()`. The `vgm()` function is used to generate variogram models (or add to existing models).
+
+```{r}
+head(vgm())
+```
+
+### Parametric Semivariograms
+
+Suppose we wish to create a Spherical variogram with parameters $c_0=1$ (nugget), $c_s=2$ (partial sill) and $a_s = 10$ (range).
+
+```{r Fit Spherical Semivariogram}
+sph1 <- vgm(psill=2, model='Sph', range=10, nugget=1)
+class(sph1); sph1
+# Plot of a particular semivariogram (Spherical)
+show.vgms(sill=2, range=10, models='Sph', nugget=1, max=13)
+```
+
+Alternatively, consider the Gaussian semivariogram model with effective range $3a_e = 10$
+
+```{r}
+gauss1 <- vgm(psill=2, model='Gau', range=10, nugget=1)
+gauss1
+```
+
+### Adding Semivariograms
+
+The sum of two valid semivariograms is also a valid semivariogram. Consider the addition of the Spherical and Gaussian semivariograms.
+
+```{r Add Semivariograms}
+gauss2 <- vgm(psill=2, model='Gau', range=10, nugget=0, add.to=sph1)
+out <- variogramLine(gauss2, maxdist=15)
+plot(out, type='l', main="Sum of Two Variograms")
+```
+
+### Fitting Semivariograms using Likelihood-based Methods
+
+```{r Fitting Spherical Semivariogram to Data}
+fit_v <- fit.variogram(vgm_log_zinc, vgm(1, "Sph", 800, 1))
+fit_v
+attr(fit_v, "SSErr")
+plot(vgm_log_zinc, model=fit_v)
+```
+
+## Lecture 8: Spatial Prediction (Kriging)
+
+```{r, Meuse IDW}
+data(meuse.grid)
+coordinates(meuse.grid) <- ~x+y
+meuse.grid <- as(meuse.grid, "SpatialPixelsDataFrame")
+
+idw.out <- gstat::idw(log(zinc) ~ 1, meuse, meuse.grid, idp=2.5)
+plot(idw.out, col=heat.colors(100))
+head(as.data.frame(idw.out), n=2)
+```
+
+
+```{r Original Plot, warning=FALSE, message=FALSE, fig.height=6}
+spplot(meuse, "lzn", main="Log-Zinc Measurements", 
+       col.regions = heat.colors(4),key.space="right")
+```
+
+
+```{r Kriging}
+vgm_log_zinc <- variogram(log(zinc) ~ 1, meuse)
+fit_v <- fit.variogram(vgm_log_zinc, vgm(1, "Sph", 800, 1))
+lz.ok <- krige(log(zinc)~1, meuse, meuse.grid, fit_v)
+plot(lz.ok, col=heat.colors(100))
+```
+
+```{r Kriging Variance Plot}
+plot(lz.ok['var1.var'])
+plot(meuse, add=TRUE, col='grey50')
+```
+
+
+```{r Filtering}
+err.fit <- fit.variogram(vgm_log_zinc, vgm(1, "Sph", 800, Err=1))
+krige(log(zinc) ~ 1, meuse, meuse[1,], err.fit)
+krige(log(zinc) ~ 1, meuse, meuse[1,], fit_v)
+```
+
+
+```{r Universal Kriging}
+vt.fit2 <- fit.variogram.gls(log(zinc) ~ sqrt(dist), data=meuse[1:40,], 
+                             model= vgm(1, "Exp", 300, 1) ,trace=FALSE)
+lz.uk.gls <- krige(log(zinc)~sqrt(dist), meuse, meuse.grid, vt.fit2)
+plot(lz.uk.gls, col=heat.colors(100))
+```
+
+
+## Lecture 9: Spatial Random Effects Model (Meuse data)
+
+Required Packages:
+
+```{r load_libraries, message = FALSE, warning=FALSE}
+library("sp")
+library("FRK")
+library("gstat")
+library("ggplot2")
+library("gridExtra")
+library("grid")
+library("INLA")
+```
+
+### Construcing Basic Areal Units (BAUs)
+
+```{r create_BAUs}
+data(meuse)
+coordinates(meuse) = ~x+y # changes meuse into SpatialPointsDataFrame
+
+# BAUs from hexagonal grid
+HexPols_df <- auto_BAUs(manifold = plane(),
+                        cellsize = 100,
+                        type = "hex",
+                        data = meuse,
+                        nonconvex_hull = FALSE) 
+# BAUs cover the convex hull of observation locations
+plot(HexPols_df)
+```
+
+### Constructing the basis functions
+
+```{r create_basis}
+# Constructing basis functions
+G <- auto_basis(manifold = plane(),data=meuse, # manifold - nature of spatial domain, plane() or sphere()
+                nres = 2,regular=2,prune=0.1,type = "bisquare") 
+# nres - number of resolutions (in this case, small and large scale, 2 resolutions)
+
+show_basis(G,ggplot()) + geom_point(data=data.frame(meuse),aes(x,y))
+```
+
+### Fitting the Spatial Random Effects (SRE) Model
+
+```{r fit_SRE}
+set.seed(1)
+
+# formula for SRE model (just an intercept here)
+f <- log(zinc) ~ 1
+
+# Call FRK()
+S <- FRK(f = f,                # formula
+         data = list(meuse),   # list of data objects (just meuse in this case)
+         basis=G,
+         BAUs=HexPols_df)          
+
+summary(S)   # Print out a summary of the returned (fitted) SRE model
+```
+
+### Prediction
+
+```{r prediction}
+# Get predictions (for the BAUs by default)
+GridBAUsPred<- predict(S, obs_fs = FALSE)
+
+# Convert the SpatialPolygonsDataFrame "GridBAUs1" to an ordinary data frame
+# For plotting:
+Pred_df <- SpatialPolygonsDataFrame_to_df(sp_polys = GridBAUsPred,vars=c("mu","sd"))
+
+# Set coordinate reference system for predictions
+# 4326 is the EPSG code for WGS84
+
+# Create plot for prediction means, mu
+g1<-ggplot() +
+  geom_polygon(
+    aes(x=x, y=y, fill=mu, group=id), # fill color by mu
+    data = Pred_df)
+
+# Change x and y axis labels
+g1<-g1 + xlab("Easting") + ylab("Northing")
+
+# Plot for standard deviation
+g2<-ggplot() +
+  geom_polygon(
+    aes(x=x, y=y, fill=sd, group=id),
+    data = Pred_df)
+
+g2<-g2 + xlab("Easting") + ylab("Northing")
+
+# Combine the above two plots on one graph
+grid.arrange(g1,g2,nrow=1)
+```
+
+## Lecture 10: Spatial Prediction in Model-Based Geostatistics
+
+```{r load_packages}
+library("sp")
+library("FRK")
+library("gstat")
+library("ggplot2")
+library("gridExtra")
+library("grid")
+library("INLA")
+library("tidyr")
+library("reshape2")
+library("gtable")
+library("dplyr")
+```
+
+# Prediction with Covariates
+
+```{r predict_with_covariates}
+# Predicting at the BAUs when the large scale trend has covariates
+
+# load meuse.grid and convert to SpatialPixelsDataFrame
+
+data("meuse", package="sp")
+coordinates(meuse) = ~ x + y
+data("meuse.grid", package = "sp")
+coordinates(meuse.grid) = ~ x + y
+gridded(meuse.grid) = TRUE
+
+# Remove any common fields in the data and the BAUs (recall that in FRK all covariates
+# need to be with the BAUs)
+
+meuse$soil <- meuse$dist <- meuse$ffreq <- NULL
+
+# formula for SRE
+f <- log(zinc) ~ 1 + sqrt(dist)
+
+# Run FRK
+S <- FRK(f = f,                # formula
+         data = list(meuse),    # data (just meuse)
+         BAUs = meuse.grid,     # the BAUs
+         regular = 0)           # irregularly placed basis functions
+
+# Predict at all the BAUs
+Pred <- predict(S, obs_fs = FALSE)  
+Pred_df<-SpatialPolygonsDataFrame_to_df(sp_polys = Pred,vars=c("mu","sd"))
+```
+
+```{r plot_predictions_1}
+g1<-ggplot() +
+  geom_polygon(aes(x=x, y=y, fill=mu,group=id),
+               data=Pred_df)
+g1<-g1 + xlab("Easting") + ylab("Northing")
+
+g2<-ggplot() +
+  geom_polygon(aes(x=x, y=y, fill=sd, group=id),
+               data=Pred_df)
+g2<-g2 + xlab("Easting") + ylab("Northing")
+
+grid.arrange(g1,g2,nrow=1)
+```
+
+### Data and Prediction Locations in Same Data Frame (missing response data)
+
+```{r plot_predictions_2}
+# Example where both observed data and prediction locations are
+# supplied in one data frame, with response at prediction locations
+# missing (NA)
+
+# Reload meuse data and assume first 10 observations are missing
+data("meuse", package = "sp")
+meuse[1:10, "zinc"] <- NA
+
+# Create a complete-data data frame
+meuse2 <- subset(meuse, !is.na(zinc))
+meuse2 <- meuse2[, c("x", "y", "zinc")]
+coordinates(meuse2) <- ~x+y
+
+# Create BAUs around all prediction and observation 
+# points (after removing data from field)
+
+meuse$zinc <- NULL
+coordinates(meuse) <- c("x", "y")
+meuse.grid2 <- BAUs_from_points(meuse)
+
+# Run the function FRK with the data frame and created BAUs.  
+f <- log(zinc) ~ 1 + sqrt(dist)
+S <- FRK(f = f, 
+         data = list(meuse2), 
+         BAUs = meuse.grid2, 
+         regular = 0)
+Pred <- predict(S, obs_fs = FALSE)
+data(meuse)
+plot(Pred$mu[1:10],log(meuse$zinc[1:10]),xlab="Predicted",ylab="Actual",cex.lab=1.5)
+abline(c(0,1))
+```
+
+### Predictions of Spatial Averages
+
+```{r predict_areal_support1}
+# Construct model for meuse data with square grid, and consider
+# prediction grid with different support
+
+# Initialise seed to ensure reproducibility
+set.seed(1)
+
+# Load meuse data and convert to sp object
+data("meuse", package = "sp")
+coordinates(meuse) =  ~ x + y
+
+# Construct the BAUs
+GridBAUs1 <- auto_BAUs(manifold = plane(),    # we are on the plane
+                       type = "grid",         # gridded BAUs (not hex)
+                       cellsize = c(100, 100), # 100m x 100m
+                       data = meuse,          # data for boundary
+                       nonconvex_hull = TRUE, # nonconvex boundary
+                       convex = -0.05)        # convex parameter (see
+                                              # INLA::inla.nonconvex.hull)
+```
+
+```{r predict_areal_support2}
+G <- auto_basis(manifold = plane(),  # we are on the plane
+                data = meuse,        # data around which to construct basis
+                regular = 0,         # irregularly placed basis
+                nres = 3,            # three resolutions
+                type = "bisquare")   # bisquare functions
+
+## Plot basis functions
+dev.new()
+print(show_basis(G) +            # main call
+      xlab("Easting (m)") +      # x-label
+      ylab("Northing (m)") +     # y-label
+      coord_fixed())             # fixed asp. ratio
+```
+
+
+```{r predict_areal_support3}
+# formula (just intercept model)
+f <- log(zinc) ~ 1
+
+
+S <- FRK(f = f,                     
+         data = list(meuse),        
+         BAUs = GridBAUs1,          
+         basis = G,                 
+         average_in_BAU = FALSE)    
+```
+
+
+```{r predict_areal_support4}
+# Now look at prediction of averages on a 600m x 600m grid
+Pred_regions <- auto_BAUs(manifold = plane(),     # we are on the plane
+                          cellsize = c(600, 600),  # 600m x 600m
+                          type = "grid",          # grid
+                          data = meuse,           # meuse data for boundary
+                          convex = -0.05)         # convex parameter (see
+                                                  # INLA::inla.nonconvex.hull)
+
+## Now predict over these regions
+Pred <- predict(S, newdata = Pred_regions,   # prediction regions
+                obs_fs = FALSE)              # Case 2 in paper (default)
+
+## Plot results
+
+## First converg SpatialPolygonsDataFrame to data frame
+Pred_regions_df <- SpatialPolygonsDataFrame_to_df(sp_polys = Pred,      # the sp obj
+                                                  vars = c("mu", "sd")) # the variables to put
+                                                                        # into the data frame
+```
+
+```{r predict_areal_support5}
+g1<-ggplot() +
+  geom_polygon(aes(x=x, y=y, fill=mu,group=id),
+               data=Pred_regions_df)
+g1<-g1 + xlab("Easting") + ylab("Northing")
+
+g2<-ggplot() +
+  geom_polygon(aes(x=x, y=y, fill=sd, group=id),
+               data=Pred_regions_df)
+g2<-g2 + xlab("Easting") + ylab("Northing")
+
+grid.arrange(g1,g2,nrow=1)
+```
+
+### Data which are Spatial Averages (Areal Data)
+
+```{r predict_areal_data1}
+# Now consider an example where the observed data do not have
+# point support
+
+set.seed(1)      # Fix seed
+data("meuse.grid", package = "sp") # load meuse data grid
+data("meuse", package = "sp")      # load meuse data
+
+## Generate observations with large spatial support
+meuse_pols <- NULL  # initialise
+offset <- 150       # half-size of box (150 m)
+
+## for each meuse data point
+for (i in 1:nrow(meuse)) {
+    this_meuse <- meuse[i, ]
+    meuse_pols <- rbind(meuse_pols,  # create a box aroun it of sides 300 m in length
+                        data.frame(x = c(this_meuse$x - offset,
+                                         this_meuse$x + offset,
+                                         this_meuse$x + offset,
+                                         this_meuse$x - offset),
+                                   y = c(this_meuse$y - offset,
+                                         this_meuse$y - offset,
+                                         this_meuse$y + offset,
+                                         this_meuse$y + offset),
+                                   id = i,
+                                   zinc = this_meuse$zinc))
+}
+
+## Convert to SpatialPolygonsDataFrame
+meuse_pols <- df_to_SpatialPolygons(meuse_pols,coords = c("x", "y"), keys = "id", proj = CRS())
+meuse_pols <- SpatialPolygonsDataFrame(meuse_pols,
+                                       data.frame(row.names = row.names(meuse_pols),
+                                                  zinc = meuse$zinc))
+coordnames(meuse_pols) <- c("x", "y")
+
+## Convert meuse and meuse.grid to sp object
+coordinates(meuse) <- ~x + y
+coordinates(meuse.grid) <- ~x+y
+
+```
+
+```{r conditional_simulation}
+# Conditionally simulate field on the BAUs and aggregate to polygons 
+# to generate realistic observations
+
+# First construct the BAUs
+GridBAUs <- auto_BAUs(manifold = plane(),      # 2D plane
+                      cellsize = c(50, 50),    # BAU cellsize
+                      type = "grid",           # grid (not hex)
+                      data = meuse,            # data around which to create BAUs
+                      convex = -0.05)          # border buffer factor
+GridBAUs$fs <- 1
+
+## Now fit variogram to meuse data and conditionally simulate
+f <- log(zinc) ~ 1
+lzn.vgm <- variogram(f, meuse)
+lzn.fit <- fit.variogram(lzn.vgm, model = vgm(1, "Sph", 900, 1))
+lzn.sim <- krige(formula = f, meuse,
+                 GridBAUs,
+                 model = lzn.fit,
+                 nsim=1, nmax = 30)
+
+# Observe field using large spatial support. In the below we run FRK to just generate
+# the mapping matrix, which we then use to assign values to the meuse polygons
+S <- FRK(f = f,  ## Just get out C Matrix
+         data = list(meuse_pols),
+         BAUs = GridBAUs,
+         regular = 0,
+         n_EM = 1, print_lik = FALSE)
+
+meuse_pols$zinc <- as.numeric(S@Cmat %*% exp(as.numeric(lzn.sim$sim1)) +
+                              0.1*rnorm(length(meuse_pols)))
+
+```
+
+
+```{r predict_areal_data2}
+## Generate the basis functions
+G <- auto_basis(manifold = plane(),   # 2D plane
+                data = meuse,         # meuse data
+                nres = 3,             # number of resolutions
+                type = "bisquare",    # type of basis function
+                regular = 0)          # place irregularly in domain
+
+## Construct and fit the SRE model
+
+S <- FRK(f = f,
+         data=list(meuse_pols),
+         BAUs=GridBAUs,
+         basis=G)
+         
+GridBAUs2 <- predict(S, obs_fs = FALSE)
+```
+
+```{r predict_areal_data3}
+## Create data frames for plotting
+BAUs_df <- data.frame(GridBAUs2)
+Obs_df <- SpatialPolygonsDataFrame_to_df(sp_polys = meuse_pols,   # BAUs to convert
+                                         vars = c("zinc"))  # fields to extract
+
+## Now plot the footprints
+g1 <- ggplot() +
+    geom_path(data = Obs_df,
+              aes(x, y, group = id),
+              colour = "black") +
+    coord_fixed() +
+    xlab("Easting (m)") + ylab("Northing (m)")
+
+
+## Now plot the prediction
+g2 <- ggplot() +                         # Use a plain theme
+    geom_tile(data = BAUs_df,            # Draw BAUs
+              aes(x, y, fill = mu),      # Colour <-> Mean
+              colour = "light grey") +   # Border is light grey
+    scale_fill_distiller(palette = "Spectral", name = "pred")  +  # Spectral palette
+    coord_fixed() +                               # fix aspect ratio
+    xlab("Easting (m)") + ylab("Northing (m)")    # axes labels
+
+## Now plot the prediction error
+g3 <- ggplot() +                          # Similar to above but with s.e.
+    geom_tile(data = BAUs_df,
+              aes(x, y, fill = sqrt(var)),
+              colour = "light grey") +
+    scale_fill_distiller(palette = "BrBG",
+                         name = "s.e.") +
+    coord_fixed() +
+    xlab("Easting (m)") + ylab("Northing (m)")
+
+dev.new()
+plot(g1)
+
+```
+
+```{r}
+
+#library(gtable)
+#p2 <- ggplotGrob(g2)
+#p3 <- ggplotGrob(g3)
+#g <- cbind(p2, p3, size="first")
+#g$heights <- unit.pmax(p2$heights, p3$heights)
+#grid.newpage()
+#grid.draw(g)
+
+grid.arrange(g2, g3, nrow = 1) # Plot
+```
+
+```{r Poisson_example_BAUs}
+
+x.seq <- y.seq <- seq(0, 1, length.out = 100)
+BAUs <- expand.grid(x = x.seq, y = y.seq)
+coordinates(BAUs) = ~ x + y
+gridded(BAUs) <- TRUE
+
+BAUs_df <- coordinates(BAUs) %>% as.data.frame
+
+```
+
+```{r Poisson_generate_data}
+
+set.seed(2020)
+
+# Define some complicated smooth trigonometric field
+
+#f <- function(x, y, a = 0, b = 0, l = 1) exp(-l * sqrt((x - a)^2 + (y - b)^2))
+logistic <- function(x, L = 1, k=1, x0 = 0) L / (1 + exp(-k * (x - x0)))
+smooth_Y_process <- function(x, y) {
+    a <- 4 + 2 * sin(5 * x) + 2 * cos(4 * y) + 2 * sin(3 * x * y)+
+    sin(7 * x) + cos(9 * y) +
+    sin(12 * x) + cos(17 * y) + sin(14 * x) * cos(16 * y)  +
+    sin(23 * x) + cos(22 * y) + sin(24 * x) * cos(26 * y) +
+    x + y + x^2 + y^2 + x * y + 
+    sin(10 * pi * x * y) + cos(20 * x * y - 3) + sin(40 * x * y)
+    
+  logistic(a, x0 = 2, L = 6, k = 0.35)
+}
+  
+BAUs_df <- BAUs_df %>% 
+  dplyr::mutate(Y = smooth_Y_process(x, y) + rnorm(length(BAUs), mean = 0, sd = 0.2)) 
+
+## Compute the true mean process, mu, over the BAUs
+BAUs_df <- dplyr::mutate(BAUs_df, mu = exp(Y))
+
+## Subsample n of the BAUs to act as observation locations, and simulate data
+n <- 750
+Poisson_simulated <- sample_n(BAUs_df, n) %>% 
+  dplyr::mutate(Z = rpois(n, lambda = mu)) %>%
+  dplyr::select(x, y, Z)  
+
+## scalar matrix for fine scale variation, and converts to SpatialPixelsDF
+BAUs$fs <- rep(1, length(BAUs)) 
+
+## Convert Poisson_simulated to Spatial* object
+coordinates(Poisson_simulated) <- ~ x + y
+
+```
+
+```{r Poisson_example_SRE}
+S <- FRK(f = Z ~ 1, data = list(Poisson_simulated), 
+                      nres = 3, BAUs = BAUs, 
+                      response = "poisson", 
+                      link = "log", 
+                      K_type = "precision", method = "TMB", est_error = FALSE) 
+pred_list<- predict(S, type = c("link", "mean"))
+
+## Predictions, uncertainty, and data
+plot_list <- plot(S, pred_list$newdata, 
+                  labels_from_coordnames = FALSE)
+
+```
+
+```{r plot_BAUs}
+
+g1<-ggplot(BAUs_df) + geom_tile(aes(x, y, fill = mu)) + 
+  scale_fill_distiller(palette = "Spectral") + 
+  labs(x = expression(s[1]), y = expression(s[2])) +
+  theme_bw() + coord_fixed() + 
+  scale_x_continuous(breaks=c(0.25, 0.75), expand = c(0, 0)) + 
+  scale_y_continuous(breaks=c(0.25, 0.75), expand = c(0, 0)) + 
+  theme(axis.text = element_text(size = 16),
+        axis.title = element_text(size = 19), 
+        legend.text = element_text(size = 16), 
+        plot.title = element_text(hjust = 0.5, size = 19))
+g1
+
+```
+
+```{r plot_data}
+
+g2<-plot_list$Z + labs(title = plot_list$Z$labels$fill) + 
+  labs(fill = "", colour = "") + 
+  scale_x_continuous(breaks=c(0.25, 0.75), expand = c(0, 0)) + 
+  scale_y_continuous(breaks=c(0.25, 0.75), expand = c(0, 0)) + 
+  theme(axis.text = element_text(size = 16),
+        axis.title = element_text(size = 19), 
+        legend.text = element_text(size = 16), 
+        plot.title = element_text(hjust = 0.5, size = 19))
+g2
+
+```
+
+```{r plot_mu}
+
+g3<-plot_list$p_Y + labs(title = plot_list$p_Y$labels$fill) + 
+  labs(fill = "", colour = "") + 
+  scale_x_continuous(breaks=c(0.25, 0.75), expand = c(0, 0)) + 
+  scale_y_continuous(breaks=c(0.25, 0.75), expand = c(0, 0)) + 
+  theme(axis.text = element_text(size = 16),
+        axis.title = element_text(size = 19), 
+        legend.text = element_text(size = 16), 
+        plot.title = element_text(hjust = 0.5, size = 19))
+g3
+
+```
+
+
+
+

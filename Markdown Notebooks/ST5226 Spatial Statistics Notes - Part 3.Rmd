@@ -1,0 +1,198 @@
+---
+title: "ST5226 Spatial Statistics Notes - Spatial Point Pattern Analysis"
+output: 
+  html_document:
+    toc: true
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls()) # clear global directory
+knitr::opts_knit$set(root.dir = '/Users/jyeo_/Desktop/MSc Statistics Coursework/ST5226 Spatial Statistics/Data')
+```
+
+## Topic 5: Spatial Point Pattern Analysis
+
+### Intensity and Poisson Point Processes
+
+### Preliminary Analysis of Point Pattern
+
+#### Packages for Analysis of Spatial Point Patterns
+
+We will be working with the `spatstat` package and the following datasets:
+
+* `japanesepines` - Example of Point Pattern under Complete Spatial Randomness (CSR) or Homogenous Poisson Point Process (HPP)
+* `redwood` - Point Pattern with Clustering
+* `cells` - Regular Point Pattern
+* `bei` - Inhomogeneous Point Pattern with Covariate Effects
+
+```{r, message=FALSE, warning=FALSE}
+# Loading Datasets and Initializing Package
+library(spatstat)
+data(japanesepines)
+data(redwood)
+data(cells)
+
+# Plot of Datasets
+opar <- par(mfrow=c(1,3))
+plot(japanesepines, main="Japanese Pines")
+plot(redwood, main="Redwood Seedlings")
+plot(cells, main="Cell Centre")
+```
+
+
+#### Complete Spatial Randomness (CSR)
+
+```{r}
+opar <- par(mfrow=c(2,3), mar=rep(0.5,4))
+for(i in 1:6){
+	pp <- rpoispp(100) # Generate random point pattern under CSR
+	plot(pp, main="")
+	}
+```
+
+#### G Function: Distance to the nearest event
+
+```{r}
+# G Plot for Japanese Pines
+envjap <- envelope(japanesepines, Gest, nrank=2, nsim=99, verbose=FALSE) 
+# nrank = cutoff rank, nsim = no. datasets simulated
+# nrank and nsim determine the significance level of the test for CSR!
+plot(envjap, obs~theo)
+```
+Under CSR, $\hat G_{obs}$ will lie in the $G$-envelope. In this scenario for the Japanese Pines dataset, we do not reject CSR. Note that the cut-off rank $l=2$ and no. of datasets simulated $s=99$ correspond to a $96\%$ pointwise confidence interval (CI).
+
+```{r}
+# G Plot for Redwood Seedlings
+envred <- envelope(redwood, Gest, nrank=2, nsim=99, verbose=FALSE)
+plot(envred, obs~theo) # Indication of Clustering
+
+# G Plot for Cell Centers
+envcells <- envelope(cells, Gest, nrank=2, nsim=99, verbose=FALSE)
+plot(envcells, obs~theo) # Indication of Regular Point Pattern
+```
+
+#### F Function: Distance from a Point (empty space function)
+
+```{r}
+# F Plot for Japanese Pines
+envjap <- envelope(japanesepines, Fest, nrank=2, nsim=99, verbose=FALSE)
+plot(envjap, obs~theo)
+
+# F Plot for Redwood Seedlings
+envred <- envelope(redwood, Fest, nrank=2, nsim=99, verbose=FALSE)
+plot(envred, obs~theo)
+
+# F Plot for Cell Centers
+envcells <- envelope(cells, Fest, nrank=2, nsim=99, verbose=FALSE)
+plot(envcells, obs~theo)
+```
+#### Quadrat Test (Pearson Chi-Sq Goodness of Fit)
+
+```{r}
+qj <- quadratcount(japanesepines,nx=3) # divides windows into quadrats of size 3x3, count no. of points in each quadrat
+plot(japanesepines, pch="+")
+plot(qj, add=TRUE, col="red") # add=TRUE overlays the quadrat window/count onto the point pattern plot
+
+quadrat.test(japanesepines,nx=3) # Note p-value >0.05 i.e. do not reject H_0
+```
+
+
+```{r}
+qr <- quadratcount(redwood,nx=3)
+plot(redwood, pch="+")
+plot(qr, add=TRUE, col="red")
+quadrat.test(redwood,nx=3) # p-value < 0.01 i.e. reject H_0 and conclude clustering exists
+
+qc <- quadratcount(cells,nx=3)
+plot(cells, pch="+")
+plot(qc, add=TRUE, col="red")
+quadrat.test(cells,nx=3) # Note: In this case, quadrat test is not strong enough to reject H_0 of CSR
+```
+
+### Statistical Analysis of Spatial Point Pattern
+
+#### Estimating Intensity using Kernal Smoothing
+
+```{r}
+# Bandwidth Selection
+bd=bw.diggle(redwood); bd # Smaller bandwidth useful for identifying sources of clustering
+bs=bw.scott(redwood); bs # Scott generates larger bandwidth, apply if more smoothing desired (spatial trend analysis)
+
+# Kernal Plots
+opar <- par(mfrow=c(1,2))
+plot(density(redwood,bd),main="Diggle") # density function performs kernal smoothing
+plot(redwood,add=TRUE,col="white")
+plot(density(redwood,bs),main="Scott") # Note smoothed output
+plot(redwood,add=TRUE,col="white")
+```
+#### Likelihood of Inhomogeneous Poisson Process (IPP)
+
+When covariates are present:
+
+* Include the covariates in a log-linear model to estimate the intensity function
+* Estimate the $K$ function - checks for interation of events using known (fitted) intensity
+
+```{r}
+## Polynomial model
+ppm(bei,~polynom(x,y,2))
+```
+
+
+```{r}
+# Model with slope as covariate
+slope <- bei.extra$grad
+ppm(bei,~slope)
+```
+
+#### Plotting Fitted Intensity
+
+```{r}
+fit <- ppm(bei,~x+y)
+plot(fit,how="image",se=FALSE)
+```
+
+#### Model Selection - ANOVA (for nested models) and AIC
+
+```{r}
+fit <- ppm(bei,~slope)
+fitnull <- ppm(bei,~1)
+anova(fitnull,fit,test="Chi") # Model selection using ANOVA for nested models
+
+AIC(fit) # Note smaller AIC, i.e. better model (also consider its Deviance)
+AIC(fitnull)
+```
+
+#### Plot of Pearson Residuals (Goodness of Fit)
+
+```{r}
+fit <- ppm(bei, ~x)
+M <- quadrat.test(fit, nx=4, ny=2)
+plot(bei, pch=".")
+plot(M, add=TRUE, col="red") # Residuals give an idea of the fit
+```
+
+### Second Order Properties: Checking for Interaction between Events
+
+#### L function: Testing for Interaction under Constant Intensity Assumption
+
+```{r}
+opar <- par(mfrow=c(1,3))
+L <- envelope(japanesepines, Lest, nsim=99, verbose=FALSE)
+plot(L, main="Jap pines")
+L <- envelope(redwood, Lest, nsim=99, verbose=FALSE)
+plot(L, main="Redwood")
+L <- envelope(cells, Lest, nsim=99, verbose=FALSE)
+plot(L, main="Cells")
+```
+
+#### K function: Non-Constant Intensity
+
+```{r, warning = FALSE, message = FALSE}
+fit <- ppm(bei, ~elev+grad, covariates=bei.extra)
+lam <- predict(fit, locations = bei)
+Ki <- Kinhom(bei, lam, verbose=FALSE) 
+plot(Ki, main="Inhomogeneous K")
+```
+

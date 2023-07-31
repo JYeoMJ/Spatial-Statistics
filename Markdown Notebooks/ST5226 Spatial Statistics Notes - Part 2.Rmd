@@ -1,0 +1,525 @@
+---
+title: "ST5226 Spatial Statistics Notes - Part 2"
+output: 
+  html_document:
+    toc: true
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls()) # clear global directory
+knitr::opts_knit$set(root.dir = '/Users/jyeo_/Desktop/MSc Statistics Coursework/ST5226 Spatial Statistics/Data')
+```
+
+## Lecture 2: Visualizing Spatial Data (15 Aug 2022)
+
+Two methods for plotting spatial data - either using traditional `plot` or using the `spplot` tool. Overview of datasets used in lecture:
+
+* `meuse` - Data frame of 155 locations around river Meuse, measurements of heavy metal concentrations are taken.
+* `meuse.riv` - A 176 x 2 matrix with identical first and last rows, river coordinates for `Polygon` object.
+*  `meuse.grid` - Data frame with 3103 rows. Each row corresponds to a pixel of the grid of the river bank.
+
+***
+
+### Using R's base `plot` function for Spatial Data
+
+```{r}
+library(sp)
+data(meuse) # loading the meuse river dataset
+coordinates(meuse) <- c("x", "y") # Sets up meuse as a SpatialPointsDataFrame object
+plot(meuse); title("Points")
+```
+
+#### Plotting `SpatialPolygons`
+
+```{r}
+data(meuse.riv)
+meuse.lst <- list(Polygons( # Initialize Polygons object with ID = "meuse.riv"
+             list(Polygon(meuse.riv)), 
+             "meuse.riv"))
+meuse.pol <- SpatialPolygons(meuse.lst) # Initialize SpatialPolygons object
+plot(meuse.pol, col = "grey")
+title("Polygons")
+```
+
+#### Plotting `SpatialPixels`
+
+```{r}
+data(meuse.grid)
+coordinates(meuse.grid) <- c("x", "y")
+meuse.grid <- as(meuse.grid, # Recall we need to use the as() function to cast
+              "SpatialPixels") ## as a SpatialPixels object
+image(meuse.grid, col = "grey") # Use image to plot gridded data
+title("Grid")
+```
+
+#### Plotting Multiple Elements
+
+First, set up the grid, then add the river as a Polygon, and lastly adding the points where the data was sampled. Now, we can see where the points were sampled in relation to the river.
+
+```{r}
+image(meuse.grid, col = "khaki2")
+plot(meuse.pol, 
+     col = "lightsteelblue2", 
+     add = TRUE) # To add the plots to the image, set `add = TRUE`
+plot(meuse, add = TRUE,  
+     col = "brown", cex = .5) # Plot points with scale factor = .5
+```
+
+#### Useful arguments in `plot`
+
+<Insert Image>
+
+#### Plotting Attributes (Representing Zinc Levels Using Circle Size)
+
+Suppose we want to illustrate zinc concentration on the map - we can use different symbol sizes (or colors) to represent the zinc levels at the 155 locations, with larger symbols for higher levels.
+
+```{r}
+image(meuse.grid, col = "lightgray")
+plot(meuse.pol, add = TRUE)
+plot(meuse, pch = 1, cex = sqrt(meuse$zinc)/20, add = TRUE)
+legVals <- c(100, 200, 500, 1000, 2000)
+legend("left", legend=legVals, pch = 1, pt.cex = sqrt(legVals)/20, 
+  bty = "n",
+  title="measured, ppm", cex=0.8, y.inter=0.9)
+title("Measured and interpolated zinc")
+```
+
+***
+
+### Lattice Plots with `spplot`
+
+* Using the `spplot` tool now instead of R default `plot` function. Suppose we want to visualize levels of all four metals in a single plot, each panel corresponding to one metal type.
+* Illustrate concentration with color using `col.regions` argument. 
+* Note that in standardizing the values, we can visualize the concentrations of metals along the river more clearly. (See standardised plot)
+
+#### Example: Plot of Raw vs Standardized values for heavy metal concentrations
+
+```{r}
+# Create a color palette with n=7 colors 
+library(RColorBrewer)
+grys <- brewer.pal(7, "Reds") # Alternatives: Try "Blues", "Greens", "Oranges"
+
+cuts=c(0,20,50,200,500,2000)
+print(spplot(meuse,
+      c("cadmium", "copper", "lead", "zinc"),
+      key.space="right", main = "ppm (Raw)", 
+      layout=c(4,1), # layout = c(cols,rows)
+      cex = .5, cuts = cuts, col.regions=grys)) # Input color palette in the col.regions argument
+
+# Creating new columns for standardized values in data.frame
+# Scale to mean zero and var = 1
+meuse$lead.st = as.vector(scale(meuse$lead))
+meuse$zinc.st = as.vector(scale(meuse$zinc))
+meuse$copper.st = as.vector(scale(meuse$copper))
+meuse$cadmium.st = as.vector(scale(meuse$cadmium))
+
+cuts=c(-1.2,0,1,2,3,5) # We will see later techniques for selecting cuts
+print(spplot(meuse, 
+      c("cadmium.st", "copper.st", "lead.st", "zinc.st"),
+      key.space="right", main = "Standardised", 
+      layout=c(4,1),
+      cex = .5, cuts = cuts, col.regions=grys))
+```
+
+#### Adding attributes
+
+Note that unlike the `plot` function, `spplot` is not sutiable for sequential adding of new elements - we need to nest the new elements within the plot command. We include them in the `sp.layout` argument.
+
+The layout for each new element has three components:
+
+* **Specification:** Whether the object is a `SpatialPoints`, `SpatialLines`, `SpatialPolygons` or text.
+* **Data to be plotted:** e.g. `meuse.pol`
+* **Additional features:** e.g. colour, symbol type
+
+```{r}
+river <- list("sp.polygons", meuse.pol)
+bank <- list("sp.polygons", meuse.grid, col="lightgray", alpha=0.2)
+print(spplot(meuse, 
+      c("cadmium.st", "copper.st", "lead.st", "zinc.st"),
+      key.space="right", main = "standardised", 
+      layout=c(4,1), sp.layout=list(river, bank), # Include the `sp.layout` argument for new elements
+      cex = .5, cuts = cuts, col.regions=grys))
+
+# Use the which argument to a layout item to specify which panels the item should be added to
+river <- list("sp.polygons", meuse.pol, which=2) # e.g. only add river to panel 2
+print(spplot(meuse, 
+      c("cadmium.st", "copper.st", "lead.st", "zinc.st"),
+      key.space="right", main = "standardised", 
+      layout=c(4,1), sp.layout=list(river, bank),
+      cex = .5, cuts = cuts, col.regions=grys))
+```
+#### Arguments in sp.layout
+
+<Insert Image>
+
+***
+
+### Color Palettes
+
+```{r}
+rainbow(n=3) # Generate random color palette (but not advisable to use this)
+col.out <- cm.colors(n=7)
+print(spplot(meuse, "cadmium.st", key.space="right", 
+      main = "standardised", 
+      sp.layout=river, cuts = cuts, 
+      col.regions=col.out))
+```
+
+
+```{r}
+rw.colors <- colorRampPalette(c("red", "blue"))
+print(spplot(meuse, "cadmium.st", key.space="right", 
+      main = "standardised", 
+      sp.layout=river, cuts = cuts, 
+      col.regions=rw.colors(7)))
+
+# display.brewer.all()
+```
+
+***
+
+### Class Intervals - Quantiles vs Natural Breaks
+
+To address how to select the appropriate cuts - use methods defined in the `classInt` package. Call the `classIntervals(...)` function with argument `style = ` the following: 
+
+* `"quantile"` - Split by Quantiles
+* `"fisher"` - Natural Breaks using Jenks(-Fisher) algorithm; Break-points are selected so that observations that are most alike are grouped together. **(Preferred Method)**
+* `"equal"` - Equal width intervals
+
+Observe in the plot for Fisher-Jenks method that values are distributed more uniformly across class intervals.
+
+```{r}
+library(classInt)
+pal <- brewer.pal(n=5, "Reds") # RColorBrewer
+
+q5 <- classIntervals(meuse$zinc, n=5, style="quantile"); q5 # n defines no. of breaks required
+fj5 <- classIntervals(meuse$zinc, n=5, style="fisher"); fj5 ## advised to be not more than 6
+
+par(mfrow = c(1, 2))
+plot(q5, pal = pal, main = "Quantile")
+plot(fj5, pal = pal, main = "Fisher-Jenks")
+```
+
+#### Zinc Data Example - Quantile vs Natural Breaks
+
+```{r}
+require(gridExtra)
+p1 <- spplot(meuse, "zinc", cuts=q5$brks, col.regions=pal, key.space="left",
+       main="Quantiles")
+p2 <- spplot(meuse, "zinc", cuts=fj5$brks, col.regions=pal, key.space="right",
+       main="Fisher")
+grid.arrange(p1,p2, ncol = 2)
+```
+
+***
+
+### Mapping Smoothed Rates and Probabilities
+
+Consider disease counts $Y_1, \dots, Y_N$ for $N$ regions, with corresponding population count $n_1, \dots, n_N$ for each region.
+
+Define the (raw) observed rates by $r_i = \frac{Y_i}{n_i}$.
+
+**Observation:** For regions with small population, disease rates can become over-inflated, _i.e. small number problem._
+
+***
+
+#### Locally Weighted Averages
+
+One possible solution is to make use of locally weighted averages. We can obtain a smoothed value for each region by simply averaging the values associated with neighboring regions.
+
+Consider the smoothed rate given by
+
+\begin{equation}
+\tilde\xi_i = \frac{\sum_{j=1}^{N} w_{ij} r_j  }{\sum_{j=1}^{N} w_{ij}}
+\end{equation}
+
+where $w_ij$ represents the weights. Possible options of weights to be used can include:
+
+* $w_ij = 1$ if regions i and j are neighbors i.e. $d_ij < \delta$, $w_ij = 0$ otherwise *i.e. disc-smoothing*.
+* $w_ij = 1/d_ij$, where $d_ij$ is the distance between regions i and j. (smaller distance -> higher weight)
+
+***
+
+#### Expectation and Variance
+
+Assuming that $Y_i \sim Pois(n_i\xi)$ and $r_i = Y_i/n_i$ ....
+
+
+***
+
+To avoid the dominance of regions with small populations, a better alternative is to use the following smoothed rate:
+
+$$
+\hat\xi_i = \frac{\sum_{j=1}^{N} w_{ij} Y_j  }{\sum_{j=1}^{N} w_{ij} n_j}
+$$
+i.e. Taking ratio between the smoothed disease count, and the smoothed population count (derived by non-parametric regression).
+
+***
+
+#### Nonparametric Regression
+
+***
+
+#### Derivation of $\hat\xi$ via MLE
+
+
+***
+
+#### Bayes Smoothing
+
+
+#### Plot of Smoothed Rates for New York Cancer Rates
+
+```{r, warning = FALSE, message = FALSE}
+library(rgdal); library(spdep)
+
+# Load Data, Select Color Palette
+NY8 <- readOGR("NY_data", "NY8_utm18", verbose=FALSE)
+pal <- brewer.pal(n=5, "Blues")
+
+# Generate Plot for Unsmoothed Rates i.e. r_i
+NY8$r <- NY8$TRACTCAS / NY8$POP8 /5 * 1e+5 # Displaying the rate per 20,000 (/5 * 1e+5)
+spplot(NY8, "r", col.regions=pal, main="Unsmoothed Rates",
+       at=classIntervals(NY8$r, n=5, "fisher")$brks) # Using Natural Breaks
+
+# Using Method of Empirical Bayes -- EBest(cases, population size)
+NY8$eb <- EBest(NY8$TRACTCAS, NY8$POP8)$estmm * 1e+5 / 5 # Extract empirical Bayes estimates, then scale
+f5 <- classIntervals(NY8$eb, n=5, "fisher")$brks
+f5[6] <- 25; f5[1] <- 5 # Add Max and Min to the breaks
+
+# Generate Plot using Empirical Bayes
+spplot(NY8, "eb", col.regions=pal, main="Emp. Bayes Smoother",
+       at=f5)
+```
+
+***
+
+#### Using Probability Mapping
+
+Probability mapping refers to a map of p-values instead of disease rates. Consider the model
+
+$$
+Y_i \sim Pois(n_i\xi_i)
+$$
+
+and hypotheses
+
+$$
+H_0: \xi_i = \xi \quad \text{vs} \quad H_1:\xi_i \neq \xi
+$$
+
+for a given $\xi$. Next, we calculate the probability of being more extreme than our observed count in each region, denoted by $p_i$ (also known as the one-sided p-value):
+
+$$
+p_i = 
+\begin{cases}
+P(Y_i \geq y_i|\xi_i = \xi) \quad \text{if} \quad y_i > n_i\xi \\
+P(Y_i \leq y_i|\xi_i = \xi) \quad \text{if} \quad y_i < n_i\xi
+\end{cases}
+$$
+where $y_i$ is the observed disease count for region $i$. Note that $\xi$ is unknown. However, we can use the global rate 
+
+$$
+r_\text{global} = \sum_{i=1}^{N}Y_i / \sum_{i=1}^{N}n_i
+$$
+
+as a reasonable estimator for $\xi$. (i.e. overall mean risk - ratio of total count against total population)
+
+#### NY Probability Map
+
+We might be more interested in the rates that are significantly high/low. Thus, the following plot indicates the regions for which the probability of a higher (red) / lower (blue) rate under the null hypothesis of a constant mean rate is < 0.05. 
+
+```{r,}
+# Calculate Choynowski Probability map values
+choy <- choynowski(NY8$TRACTCAS, NY8$POP8)
+# Obtain the indexes for which the p-values are small using which()
+id_less <- which(choy$pmap < 0.05 & choy$type == TRUE) # type - TRUE if observed count LESS than expected
+id_more <- which(choy$pmap < 0.05 & choy$type != TRUE)
+
+plot(NY8, axes=TRUE)
+# Plotting only cases where p-values are small
+plot(NY8[id_less, ], col='blue', border=NA, add=TRUE) # where Observed < Expected
+plot(NY8[id_more, ], col='red', border=NA, add=TRUE) # where Observed > Expected
+legend("topright", fill=c("red", "blue"), 
+       legend=c("Obs. > Exp", "Obs. < Exp"))
+```
+
+***
+
+## Lecture 3: Spatial Data Import and Export (23 Aug 2022)
+
+### Coordinate Reference System (CRS)
+
+* In summary - a coordinate reference system (CRS) refers to the way in which spatial data representing the Earth's surface are flattened into a 2D-surface. 
+* Contains information including: coordinate system (point of reference), units, projection method used. 
+* Most common CRS projection used: WGS84
+
+#### EPSG Codes
+
+* The `EPSG` codes are 4-5 digit numbers representing `CRS` definitions. You can create a list of EPSG codes using the `make_epsg()`. We will be working with the Singapore CRS (`code == 3414`).
+* See that for Singapore CRS, point of reference is 1.37 degrees north and 103.83 degrees east.
+
+```{r, warning = FALSE, message = FALSE}
+library(rgdal)
+EPSG <- make_EPSG()  # creates data frame of EPSG projection codes
+
+# Singapore Land Authority (SLA) uses the SVY21 projection CRS
+EPSG[EPSG$code == 3414,]
+```
+
+
+```{r}
+sg <- readRDS("sg_boundary.rds") # Load SG boundary shapefile
+plot(sg,axes = TRUE)
+grid()
+```
+
+#### Transforming CRS
+
+Use the `spTransform` function to transform spatial datasets from one CRS to another. For example, we want to convert the CRS of `sg` from SVY21 to WGS84.
+
+```{r}
+library(sp)
+sg2 <- spTransform(sg, CRS("+proj=longlat +datum=WGS84"))
+plot(sg2, axes=TRUE)
+```
+
+#### Degrees, minutes and seconds (DMS class)
+
+* Geographic coordinates may be represented in degrees, minutes and seconds (format).
+* We can convert data of DMS class to numbers using the `as.numeric` function, and from numbers to DMS class using the `dd2ms` function.
+
+```{r}
+Qtown_lat <- dd2dms(1.2937, NS=TRUE) # NS TRUE for north/south decimal degrees
+Qtown_lon <- dd2dms(103.8125, NS=FALSE) # NS FALSE for east/west decimal degrees
+Qtown_lon; as.numeric(Qtown_lon)
+```
+
+***
+
+### Vector File Formats
+
+* In general, spatial data files are typically stored in a _shapefile_ format. Information on each dataset is contained in 3 or more files within the same folder, and are of the form *.shp* or *.dbf* etc.
+
+  + *x.shp* contains the spatial information
+  + *x.dbf* contains the attribute information
+
+```{r, warning = FALSE, message = FALSE}
+# Reading in data on Shapefile Format
+ogrInfo("/Users/jyeo_/Desktop/MSc Statistics Coursework/ST5226 Spatial Statistics/Data/NY_data", "NY8cities")
+cities <- readOGR("/Users/jyeo_/Desktop/MSc Statistics Coursework/ST5226 Spatial Statistics/Data/NY_data", "NY8cities")
+
+cities; proj4string(cities) # See cities in dataset and proj4string attributes
+```
+
+***
+
+### Google Earth, Google Maps and Other Formats
+
+* Google Earth uses the *KML* file format - able to read and write datasets from the *sp* format to the *KML* format using `readOGR` and `writeOGR`. Note that the data first has to be of the `WGS84` datum.
+
+```{r}
+# Loading Dengue Clusters data:
+den <- readRDS("den_clusters_2015_12_15.rds") 
+denWGS <- spTransform(den, CRS("+proj=longlat +datum=WGS84")) # Convert to WGS84
+
+# Writing to KML file (for importing into Google Earth):
+# writeOGR(denWGS, dsn='den.kml', layer='test', driver='KML')
+# Open `den.kml` file in Google Earth
+```
+
+#### Overlaying Spatial Objects onto Google Maps
+
+```{r}
+library(RgoogleMaps)
+clusters <- c(3, 4, 24, 29, 31, 44, 47) # Selecting dengue clusters of interest
+rochor.clusters <- as(denWGS[clusters, ], "SpatialPolygons") # convert to SpatialPolygons
+
+# Extract map from Google Maps using the bbox values (specify longitude and latitude):
+bbox(rochor.clusters) # Gives an indication of where the clusters lie within
+rochor.map <- GetMap(center=c(lat=1.315, lon=103.853), zoom=15)
+
+# Plot polygons on the extracted map:
+PlotPolysOnStaticMap(rochor.map, rochor.clusters,
+                     add=FALSE)
+```
+
+***
+
+### Handling and Combining Features
+
+* In this section, we highlight the following functions from the `rgeos` package.
+  + `gArea` - Finding the area of polygons.
+  + `gUnaryUnion` - Merge 2 or more polygons into a single polygon. Identifies common boundaries and intersections and reduces polygon count accordingly. 
+  + `gBuffer` - Creates a buffer region around a feature of interest (to highlight feature).
+  + `over` - Combining information in spatial objects of possibly different classes.
+  
+* *sg_subzones.rds* is a file containing a division of Singapore into 310 sub-zones.
+
+```{r, message = FALSE, warning = FALSE}
+library(rgeos)
+# Computing Polygon Area:
+subzones <- readRDS("sg_subzones.rds"); head(subzones$subzone) # View SG sub-zones
+sub.area <- gArea(subzones, byid = TRUE); tail(sub.area, n=1) # Computing the area of each sub-zone
+
+# Merging Polygons using gUnaryUnion:
+id <- c(20, 87, 181)
+plot(subzones[id,], axes=TRUE) # Plotting subset of sub-zones
+union <- gUnaryUnion(subzones[id,])
+plot(union, axes=TRUE) # Note difference in plots upon union of sub-zone polygons
+```
+
+#### Creating Buffers around SpatialObject
+
+```{r}
+# Creating a Buffer for the PIE Expressway
+express <- readRDS("sg_expressways.rds")
+PIE.index <- express$name == "Pan-Island Expressway"
+PIE <- express[PIE.index,] # Filtering out PIE data from Expressway Dataset
+out <- gBuffer(PIE, width=1000)
+
+# Generating Plots
+plot(sg)
+plot(out, col=grey(0.5, 0.2), border=NA, add=TRUE) # Plot of buffer region, grey(level,alpha) for color specification
+plot(PIE, col='red', add=TRUE) # Plot PIE points
+```
+
+#### Combining features across Spatial Objects - Function `over`
+
+```{r}
+# Applying over on meuse (Spatial Points) and meuse.grid (Spatial Pixels)
+index <- over(meuse, meuse.grid) # at the spatial locations of x, retrieve indexes or attributes from y
+head(index) # i.e. 1st location in meuse lies in 9th cell of the grid etc.
+```
+
+#### Multiple Correspondences
+
+* Suppose we are interested to know all the features in y corresponding to each feature in x.
+* `index.all` is a list with the same length as `meuse`. The 1st item in `index.all` are the indices of `meuse.grid` that the 1st feature in `meuse` has intersection with, and so forth.
+
+```{r}
+index.all <- over(meuse, meuse.grid, returnList=TRUE) # set returnList argument = TRUE
+head(index.all, n = 3)
+```
+
+#### Further Example: x = Points/Grid vs y = Grid
+
+```{r}
+x <- SpatialPoints(coords=matrix(c(1.1,1.1), nrow = 1))
+g <- GridTopology(c(0,0),c(1,1),c(3,3)); y <- SpatialGrid(g)
+
+# Point over Grid
+plot(y, axes = TRUE);plot(x, add = TRUE)
+over(x,y)
+
+# Grid over Grid
+g2 <- GridTopology(c(0.1,0.1),c(1,1),c(3,3)); x2 <- SpatialGrid(g2)
+over(x2,y)
+```
+
+
+
+
+
